@@ -577,6 +577,47 @@ describe('stored vaults', () => {
     expect(catalog?.vaults.map((vault) => vault.name).sort()).toEqual(['A2', 'B2', 'C']);
   });
 
+  it('keeps the legacy vault as a catalog member when a new vault is created', async () => {
+    const { vault, note } = createNote(createEmptyVault(), 'Legacy note', '# Legacy');
+    await saveVault(vault);
+    const before = await readRawValue(DOCUMENT_KEY);
+
+    const created = await createStoredVault('Work', createEmptyVault());
+
+    expect(created.catalog.vaults.map((entry) => entry.id)).toContain('current');
+    expect(created.catalog.vaults.find((entry) => entry.id === 'current')?.name).toBe('My vault');
+    expect(created.catalog.activeVaultId).not.toBe('current');
+    expect(await readRawValue(DOCUMENT_KEY)).toEqual(before);
+    const legacy = await loadVault();
+    expect(legacy?.notes[0]?.id).toBe(note.id);
+    expect(legacy?.notes[0]?.body).toBe('# Legacy');
+  });
+
+  it('opens the legacy vault after the catalog migration', async () => {
+    const { vault, note } = createNote(createEmptyVault(), 'Legacy note', '# Legacy');
+    await saveVault(vault);
+
+    const catalog = await loadCatalog();
+    expect(catalog?.activeVaultId).toBe('current');
+
+    const opened = await openStoredVault('current');
+
+    expect(opened.vault.notes[0]?.id).toBe(note.id);
+    expect(opened.vault.notes[0]?.body).toBe('# Legacy');
+    expect(opened.catalog.activeVaultId).toBe('current');
+    expect(opened.catalog.vaults).toHaveLength(1);
+  });
+
+  it('refuses to create a vault while the legacy document is unreadable', async () => {
+    await writeRawValue(DOCUMENT_KEY, { version: 2, vault: createEmptyVault() });
+    const before = await readRawValue(DOCUMENT_KEY);
+
+    await expect(createStoredVault('Work', createEmptyVault())).rejects.toThrow(/version/i);
+
+    expect(await readRawValue(CATALOG_KEY)).toBeUndefined();
+    expect(await readRawValue(DOCUMENT_KEY)).toEqual(before);
+  });
+
   it('rejects ids that cannot address a store key', async () => {
     await expect(openStoredVault('')).rejects.toThrow(/id/i);
     await expect(openStoredVault('bad id')).rejects.toThrow(/id/i);

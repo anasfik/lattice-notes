@@ -113,9 +113,11 @@ export async function loadCatalog(): Promise<VaultCatalog | null> {
  * The document, the catalog entry and the active selection are written in one
  * transaction, so a failure leaves no partial vault behind.
  *
- * The catalog is not seeded or migrated here: a legacy document becomes a
- * catalog member only through {@link loadCatalog}, so callers must call that
- * first or the user's original vault stays outside the catalog.
+ * A readable legacy document joins the catalog in the same transaction, so
+ * creating a vault can never hide the user's original notes. The legacy
+ * document keeps its own key and its own content; only a metadata entry is
+ * added. An unreadable legacy document stops the write instead of being
+ * ignored, because a broken document is never a fresh start.
  */
 export async function createStoredVault(
   name: string,
@@ -127,12 +129,16 @@ export async function createStoredVault(
   try {
     const id = newVaultId();
     const entry: VaultMetadata = { id, name: displayName, createdAt: Date.now(), archivedAt: null };
-    return await commitCatalog(db, [], ({ catalog }) => {
+    return await commitCatalog(db, [DOCUMENT_KEY], ({ catalog, documents }) => {
       if (catalog?.vaults.some((vault) => vault.id === id)) {
         throw new Error(`A vault with the id "${id}" already exists.`);
       }
-      const vaults = [...(catalog?.vaults ?? []), entry];
-      const next: VaultCatalog = { version: CATALOG_VERSION, activeVaultId: id, vaults };
+      const members = catalog?.vaults ?? [];
+      const vaults =
+        documents.get(DOCUMENT_KEY) && !members.some((member) => member.id === LEGACY_VAULT_ID)
+          ? [...members, legacyCatalogMember()]
+          : members;
+      const next: VaultCatalog = { version: CATALOG_VERSION, activeVaultId: id, vaults: [...vaults, entry] };
       return {
         catalog: next,
         documents: [{ key: documentKey(id), vault }],
@@ -389,6 +395,21 @@ function commitCatalog<T>(
 }
 
 /**
+ * Builds the metadata entry for the legacy document.
+ *
+ * The entry describes the document that already exists at the legacy key; it
+ * never carries content, so the document itself stays untouched.
+ */
+function legacyCatalogMember(): VaultMetadata {
+  return {
+    id: LEGACY_VAULT_ID,
+    name: LEGACY_VAULT_NAME,
+    createdAt: Date.now(),
+    archivedAt: null,
+  };
+}
+
+/**
  * Adds the metadata-only catalog entry for a readable legacy document.
  *
  * The legacy document keeps its own key and its own content; only the
@@ -418,14 +439,7 @@ function migrateLegacyCatalog(db: IDBDatabase): Promise<VaultCatalog> {
         const catalog: VaultCatalog = {
           version: CATALOG_VERSION,
           activeVaultId: LEGACY_VAULT_ID,
-          vaults: [
-            {
-              id: LEGACY_VAULT_ID,
-              name: LEGACY_VAULT_NAME,
-              createdAt: Date.now(),
-              archivedAt: null,
-            },
-          ],
+          vaults: [legacyCatalogMember()],
         };
         store.put(catalog, CATALOG_KEY);
         result = catalog;
