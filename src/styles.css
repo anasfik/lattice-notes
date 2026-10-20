@@ -1031,6 +1031,8 @@ a {
 
   .workspace__rail {
     flex-direction: row;
+    /* The rail wraps instead of running past the edge of a narrow screen. */
+    flex-wrap: wrap;
     justify-content: space-between;
     padding: var(--space-2) var(--space-3);
     border-right: 0;

@@ -71,14 +71,26 @@ export default function Workspace(props: WorkspaceProps) {
   const [compact, setCompact] = useState(isCompact);
   const [notesOpen, setNotesOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
+  const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
   const notesToggleRef = useRef<HTMLButtonElement>(null);
   const contextToggleRef = useRef<HTMLButtonElement>(null);
+  const importButtonRef = useRef<HTMLButtonElement>(null);
   const searchPending = useRef(false);
 
   // The panels are always open on a wide screen and closed by default on a
   // narrow one, where the editor is the primary content.
   const notesExpanded = !compact || notesOpen;
   const contextExpanded = !compact || contextOpen;
+
+  // The explorer asks for a focus target when a note is deleted, restored or
+  // undone. The row that takes the focus lives inside the notes panel, so the
+  // panel has to be open in the committed DOM before the explorer focuses it.
+  // The explorer is a child and child effects run before the effects of this
+  // component, so the panel is opened during the render instead.
+  if (props.focusNote !== focusTarget) {
+    setFocusTarget(props.focusNote);
+    if (props.focusNote && compact) setNotesOpen(true);
+  }
 
   // The panels follow the width of the window.
   useEffect(() => {
@@ -93,14 +105,17 @@ export default function Workspace(props: WorkspaceProps) {
     };
   }, []);
 
-  // Escape closes an open panel and gives the keyboard back to its toggle.
+  // Escape closes the panel that holds the keyboard and gives it back to that
+  // panel's toggle.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       const target = event.target;
       if (isEditable(target)) return;
       if (target instanceof Element && target.closest('dialog[open]')) return;
-      if (contextOpen) {
+
+      const panel = target instanceof Element ? target.closest('aside') : null;
+      if (panel?.id === CONTEXT_PANEL_ID && contextOpen) {
         setContextOpen(false);
         contextToggleRef.current?.focus();
         return;
@@ -108,11 +123,25 @@ export default function Workspace(props: WorkspaceProps) {
       if (notesOpen) {
         setNotesOpen(false);
         notesToggleRef.current?.focus();
+        return;
+      }
+      if (contextOpen) {
+        setContextOpen(false);
+        contextToggleRef.current?.focus();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [contextOpen, notesOpen]);
+
+  // The explorer focuses the row in a child effect. If that did not place the
+  // keyboard, the editor takes it, so it never stays on the body.
+  useEffect(() => {
+    if (!props.focusNote) return;
+    if (document.activeElement !== document.body) return;
+    const editor = props.editorRef?.current;
+    if (editor && !editor.disabled) editor.focus();
+  }, [props.focusNote, props.editorRef]);
 
   // A request to focus the search field opens the notes panel first, because
   // a field inside a closed panel cannot take the focus.
@@ -146,6 +175,7 @@ export default function Workspace(props: WorkspaceProps) {
         <button
           type="button"
           className="workspace__rail-action"
+          ref={importButtonRef}
           aria-label="Import Markdown"
           title="Import Markdown"
           onClick={props.onImport}
@@ -239,7 +269,12 @@ export default function Workspace(props: WorkspaceProps) {
             <button
               type="button"
               className="workspace__warning-action"
-              onClick={props.onDismissImport}
+              onClick={() => {
+                props.onDismissImport();
+                // The alert takes the focused button with it, so the keyboard
+                // goes to the import control that is always there.
+                importButtonRef.current?.focus();
+              }}
             >
               Dismiss
             </button>

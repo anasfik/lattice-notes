@@ -712,6 +712,22 @@ describe('import and export', () => {
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
+  it('moves the keyboard to the import control when the import alert is dismissed', async () => {
+    await renderApp();
+
+    await selectFiles(fileInput(), [
+      new File(['not json at all'], 'vault.json', { type: 'application/json' }),
+    ]);
+    await waitFor(() => alertText().includes('import failed'));
+
+    const dismiss = buttonByName('Dismiss');
+    dismiss.focus();
+    await click(dismiss);
+
+    await waitFor(() => document.activeElement !== document.body);
+    expect(document.activeElement).toBe(buttonByName('Import Markdown'));
+  });
+
   it('reports a file that cannot be read and leaves the vault unchanged', async () => {
     await renderApp();
     const before = noteNames();
@@ -849,6 +865,83 @@ describe('compact panels', () => {
 
     await waitFor(() => document.activeElement === searchInput());
     expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('opens the notes panel and keeps the keyboard on the row after a delete', async () => {
+    window.innerWidth = 390;
+    await renderApp();
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    await click(buttonByName('Delete Welcome to Lattice Notes'));
+
+    await waitFor(() => document.activeElement !== document.body);
+    expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(false);
+    expect((document.activeElement as HTMLElement | null)?.textContent).toBe('Getting started');
+  });
+
+  it('opens the notes panel and keeps the keyboard on the empty state after the last delete', async () => {
+    const created = createNote(createEmptyVault(), 'Only note');
+    await saveVault(created.vault);
+    window.innerWidth = 390;
+    await renderApp();
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    await click(buttonByName('Delete Only note'));
+
+    await waitFor(() => document.activeElement !== document.body);
+    expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(false);
+    expect(document.activeElement).toBe(buttonByName('Create first note'));
+  });
+
+  it('keeps the keyboard on the restored row after an undo', async () => {
+    window.innerWidth = 390;
+    await renderApp();
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    await click(buttonByName('Delete Welcome to Lattice Notes'));
+
+    // The panel is open after the delete; close it again, so the undo asks
+    // for a focus target inside a collapsed panel.
+    const toggles = queryAll<HTMLButtonElement>('.workspace__panel-toggle');
+    await click(toggles[0] as Element);
+    expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(true);
+
+    const undo = buttonByName('Undo delete');
+    undo.focus();
+    await click(undo);
+
+    await waitFor(() => document.activeElement !== document.body);
+    expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(false);
+    expect((document.activeElement as HTMLElement | null)?.textContent).toBe(
+      'Welcome to Lattice Notes',
+    );
+  });
+
+  it('closes the panel that holds the keyboard on Escape', async () => {
+    window.innerWidth = 390;
+    await renderApp();
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    const toggles = queryAll<HTMLButtonElement>('.workspace__panel-toggle');
+    await click(toggles[0] as Element);
+    await click(toggles[1] as Element);
+
+    const row = container.querySelector<HTMLButtonElement>('.explorer__note');
+    if (!row) throw new Error('no note row');
+    row.focus();
+    await pressKey(row, 'Escape');
+
+    expect(toggles[0]?.getAttribute('aria-expanded')).toBe('false');
+    expect(toggles[1]?.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(toggles[0]);
   });
 });
 
