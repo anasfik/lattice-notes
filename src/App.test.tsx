@@ -8,9 +8,68 @@ import App from './App';
 import { MAX_ENVELOPE_NOTES } from './domain/transfer';
 import { createEmptyVault, createNote, deleteNote } from './domain/vault';
 import type { Vault } from './domain/types';
-import { loadVault, saveVault } from './storage/vaultRepository';
+import {
+  createSeedVault,
+  createStoredVault,
+  loadCatalog,
+  loadVault,
+  openStoredVault,
+  saveVault,
+} from './storage/vaultRepository';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+/**
+ * The storage of the test, with the switches that make the timing of a
+ * write observable: a write can wait, a write can fail and a read of a vault
+ * can fail. The real repository does the work; only the timing is added.
+ */
+const storage = vi.hoisted(() => ({
+  /** The milliseconds every next write to a key waits for. */
+  delays: new Map<string, number[]>(),
+  /** The writes that were started, so a test can wait for one to land. */
+  writes: [] as { key: string; done: boolean; failed: boolean }[],
+  /** The writes that fail, per key. */
+  failures: new Map<string, number>(),
+  /** The reads of a vault that fail, per id. */
+  readFailures: new Map<string, number>(),
+  /** The milliseconds a read of a vault waits for, per id. */
+  readDelays: new Map<string, number>(),
+}));
+
+vi.mock('./storage/vaultRepository', async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import('./storage/vaultRepository');
+  return {
+    ...actual,
+    saveVault: async (vault: Vault, id?: string) => {
+      const key = id ?? 'current';
+      const record = { key, done: false, failed: false };
+      storage.writes.push(record);
+      const queue = storage.delays.get(key);
+      const wait = queue && queue.length > 0 ? (queue.shift() as number) : 0;
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      const failures = storage.failures.get(key) ?? 0;
+      if (failures > 0) {
+        storage.failures.set(key, failures - 1);
+        record.failed = true;
+        record.done = true;
+        throw new Error('the local vault could not be written');
+      }
+      await actual.saveVault(vault, id);
+      record.done = true;
+    },
+    openStoredVault: async (id: string) => {
+      const wait = storage.readDelays.get(id) ?? 0;
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      const failures = storage.readFailures.get(id) ?? 0;
+      if (failures > 0) {
+        storage.readFailures.set(id, failures - 1);
+        throw new Error('the stored vault could not be opened');
+      }
+      return actual.openStoredVault(id);
+    },
+  };
+});
 
 // jsdom ships the dialog element without the modal behaviour, so the harness
 // stands in for the platform: the open state, focus moved into the dialog,
@@ -103,8 +162,23 @@ async function readRawDocument(): Promise<{ version: number; vault: Vault }> {
 
 /** Writes a raw document, including envelopes the repository must reject. */
 async function writeRawDocument(document: unknown): Promise<void> {
+  await writeRaw('current', document);
+}
+
+/** Writes a raw catalog, including a catalog the repository must reject. */
+async function writeRawCatalog(catalog: unknown): Promise<void> {
+  await writeRaw('catalog', catalog);
+}
+
+/** Writes one raw record into the store of the app. */
+async function writeRaw(key: string, value: unknown): Promise<void> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(STORE_NAME)) {
+        request.result.createObjectStore(STORE_NAME);
+      }
+    };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error('raw open failed'));
   });
@@ -113,7 +187,7 @@ async function writeRawDocument(document: unknown): Promise<void> {
       const transaction = db.transaction(STORE_NAME, 'readwrite');
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error ?? new Error('raw write failed'));
-      transaction.objectStore(STORE_NAME).put(document, DOCUMENT_KEY);
+      transaction.objectStore(STORE_NAME).put(value, key);
     });
   } finally {
     db.close();
@@ -254,7 +328,28 @@ async function renderApp(): Promise<void> {
   await act(async () => {
     root.render(<App />);
   });
-  await waitFor(() => container.querySelector('.workspace') !== null);
+  await waitFor(
+    () =>
+      container.querySelector('.workspace') !== null ||
+      container.querySelector('.onboarding') !== null,
+  );
+}
+
+/**
+ * Boots the app as a user whose notes are already stored.
+ *
+ * The legacy document is stored when the test stored nothing, so the app
+ * finds a catalog, skips the onboarding and opens the stored vault. A storage
+ * that cannot be read is left alone, so the app can show its error.
+ */
+async function renderLegacyApp(): Promise<void> {
+  try {
+    const stored = await loadCatalog();
+    if (stored === null) await saveVault(createSeedVault());
+  } catch {
+    // The storage cannot be read, so nothing is written into it.
+  }
+  await renderApp();
 }
 
 /** Unmounts the app and mounts it again on the same stored vault. */
@@ -266,7 +361,61 @@ async function remountApp(): Promise<void> {
   await act(async () => {
     root.render(<App />);
   });
-  await waitFor(() => container.querySelector('.workspace') !== null);
+  await waitFor(
+    () =>
+      container.querySelector('.workspace') !== null ||
+      container.querySelector('.onboarding') !== null,
+  );
+}
+
+/**
+ * Stores a second vault in the catalog and returns its id.
+ *
+ * The open vault stays the one of the test, so the app opens it as usual.
+ */
+async function storeSecondVault(): Promise<string> {
+  return storeVault('Second vault', 'Only in B', 'body of B');
+}
+
+/** Stores a third vault in the catalog and returns its id. */
+async function storeThirdVault(): Promise<string> {
+  return storeVault('Third vault', 'Only in C', 'body of C');
+}
+
+/** Stores another vault in the catalog and returns its id. */
+async function storeVault(name: string, noteName: string, body: string): Promise<string> {
+  const created = createNote(createEmptyVault(), noteName, body);
+  const vault = { ...created.vault, activeNoteId: created.note.id };
+  const stored = await createStoredVault(name, vault);
+  const id = stored.catalog.activeVaultId;
+  await openStoredVault('current');
+  return id;
+}
+
+/** The button of the vault manager with the given label. */
+function findManagerButton(label: string): HTMLButtonElement | undefined {
+  return Array.from(
+    container.querySelectorAll<HTMLButtonElement>('dialog.vaults button'),
+  ).find((button) => button.getAttribute('aria-label') === label);
+}
+
+/**
+ * Clicks a button of the vault manager.
+ *
+ * The manager reads the catalog when it opens, so the button may arrive a
+ * moment later.
+ */
+async function clickManagerButton(label: string): Promise<void> {
+  await waitFor(() => findManagerButton(label) !== undefined);
+  await click(findManagerButton(label) as Element);
+}
+
+/** Opens the vault manager of the toolbar. */
+async function openVaultManager(): Promise<void> {
+  const trigger = Array.from(container.querySelectorAll<HTMLButtonElement>('.workspace__vault'))[0];
+  if (!trigger) throw new Error('no vault trigger');
+  await click(trigger);
+  await waitFor(() => container.querySelector('dialog.vaults')?.hasAttribute('open') === true);
 }
 
 /** Opens the command palette with the shortcut under test. */
@@ -283,6 +432,11 @@ beforeEach(async () => {
   document.body.appendChild(container);
   root = createRoot(container);
   window.innerWidth = INITIAL_WIDTH;
+  storage.delays.clear();
+  storage.writes.length = 0;
+  storage.failures.clear();
+  storage.readFailures.clear();
+  storage.readDelays.clear();
   await deleteDatabase();
 });
 
@@ -298,7 +452,7 @@ describe('workspace shell', () => {
   it('renders without an application console error', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      await renderApp();
+      await renderLegacyApp();
     } finally {
       const calls = spy.mock.calls;
       spy.mockRestore();
@@ -309,8 +463,8 @@ describe('workspace shell', () => {
     expect(container.querySelector('search')).toBeNull();
   });
 
-  it('seeds a usable vault on the first visit', async () => {
-    await renderApp();
+  it('seeds a usable vault for a user whose notes are already stored', async () => {
+    await renderLegacyApp();
 
     expect(noteNames().length).toBeGreaterThan(1);
     expect(noteNames()).toContain('Welcome to Lattice Notes');
@@ -321,7 +475,7 @@ describe('workspace shell', () => {
     const created = createNote(createEmptyVault(), 'Scratch');
     await saveVault(deleteNote(created.vault, created.note.id).vault);
 
-    await renderApp();
+    await renderLegacyApp();
 
     expect(noteNames()).toHaveLength(0);
     expect(container.querySelector('.explorer__empty-text')?.textContent).toContain('No notes yet');
@@ -335,7 +489,7 @@ describe('workspace shell', () => {
   it('drops the undo control when the empty state restores the note', async () => {
     const created = createNote(createEmptyVault(), 'Only note');
     await saveVault(created.vault);
-    await renderApp();
+    await renderLegacyApp();
 
     await click(buttonByName('Delete Only note'));
     expect(container.querySelectorAll('.workspace__undo')).toHaveLength(1);
@@ -348,7 +502,7 @@ describe('workspace shell', () => {
   });
 
   it('creates a note, selects it, and announces the change', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const before = noteNames().length;
 
     await click(buttonByName('New note'));
@@ -360,7 +514,7 @@ describe('workspace shell', () => {
   });
 
   it('edits the note body in memory and persists it', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await fill(editorTextarea(), 'Hello lattice');
 
@@ -374,7 +528,7 @@ describe('workspace shell', () => {
   });
 
   it('renames a note with the keyboard', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await click(buttonByName('Rename Welcome to Lattice Notes'));
     const input = container.querySelector<HTMLInputElement>('.explorer__rename-input');
@@ -387,7 +541,7 @@ describe('workspace shell', () => {
   });
 
   it('deletes a note and restores it with undo', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await click(buttonByName('Delete Welcome to Lattice Notes'));
 
@@ -402,7 +556,7 @@ describe('workspace shell', () => {
   });
 
   it('creates a note with the Ctrl/Cmd+N shortcut', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const before = noteNames().length;
 
     await act(async () => {
@@ -419,7 +573,7 @@ describe('workspace shell', () => {
     const second = createNote(first.vault, 'Beta', 'Beta body');
     await saveVault({ ...second.vault, activeNoteId: first.note.id });
 
-    await renderApp();
+    await renderLegacyApp();
     const link = container.querySelector('.preview__wikilink');
 
     expect(link?.tagName).toBe('BUTTON');
@@ -438,7 +592,7 @@ describe('workspace shell', () => {
     );
     await saveVault({ ...created.vault, activeNoteId: created.note.id });
 
-    await renderApp();
+    await renderLegacyApp();
     const body = container.querySelector('.preview__body');
 
     expect(body?.querySelector('script')).toBeNull();
@@ -451,7 +605,7 @@ describe('workspace shell', () => {
   });
 
   it('keeps the notes usable and warns when saving fails', async () => {
-    await renderApp();
+    await renderLegacyApp();
     await dropStore();
 
     await fill(editorTextarea(), 'draft body');
@@ -474,7 +628,7 @@ describe('workspace shell', () => {
   it('warns and stays usable when local storage cannot be read', async () => {
     vi.stubGlobal('indexedDB', undefined);
 
-    await renderApp();
+    await renderLegacyApp();
 
     expect(alertText()).toContain('Local storage');
 
@@ -487,7 +641,7 @@ describe('workspace shell', () => {
     const created = createNote(createEmptyVault(), 'Alpha', 'See [[Nowhere]] now.');
     await saveVault({ ...created.vault, activeNoteId: created.note.id });
 
-    await renderApp();
+    await renderLegacyApp();
 
     const link = container.querySelector('.preview__wikilink');
     expect(link?.textContent).toMatch(/^Create note Nowhere/);
@@ -498,7 +652,7 @@ describe('workspace shell', () => {
     const created = createNote(createEmptyVault(), 'Alpha', 'See [[Nowhere|the void]] now.');
     await saveVault({ ...created.vault, activeNoteId: created.note.id });
 
-    await renderApp();
+    await renderLegacyApp();
 
     const link = container.querySelector('.preview__wikilink--missing');
     expect(link?.textContent).toMatch(/^Create note Nowhere \(the void\)/);
@@ -506,7 +660,7 @@ describe('workspace shell', () => {
   });
 
   it('keeps one polite live region and a persistent visible label', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
     expect(container.querySelectorAll('[aria-live="assertive"]')).toHaveLength(0);
@@ -517,7 +671,7 @@ describe('workspace shell', () => {
   });
 
   it('confirms a local save in the live region', async () => {
-    await renderApp();
+    await renderLegacyApp();
     await fill(editorTextarea(), 'saved body');
 
     await waitFor(() => statusText().includes('Saved to local storage'));
@@ -527,7 +681,7 @@ describe('workspace shell', () => {
     const created = createNote(createEmptyVault(), 'Empty', '');
     await saveVault(created.vault);
 
-    await renderApp();
+    await renderLegacyApp();
 
     const body = container.querySelector('.preview__body');
     expect(body?.children.length).toBeGreaterThan(0);
@@ -535,7 +689,7 @@ describe('workspace shell', () => {
   });
 
   it('keeps the document order in step with the reading order', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     const order = Array.from(container.querySelector('.workspace')?.children ?? []).map(
       (child) => child.className,
@@ -550,7 +704,7 @@ describe('workspace shell', () => {
   });
 
   it('restores the selected note after a remount', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await click(buttonByName('Getting started'));
     await waitFor(async () => {
@@ -566,7 +720,7 @@ describe('workspace shell', () => {
   });
 
   it('replaces the undo slot with the note of the second delete', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await click(buttonByName('Delete Welcome to Lattice Notes'));
     expect(statusText()).toContain('Deleted Welcome to Lattice Notes');
@@ -583,7 +737,7 @@ describe('workspace shell', () => {
 
 describe('import and export', () => {
   it('imports a Markdown file as a new note and keeps the existing notes', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const before = noteNames();
 
     await selectFiles(fileInput(), [
@@ -597,7 +751,7 @@ describe('import and export', () => {
 
   it('says that an import in memory only mode is not saved', async () => {
     vi.stubGlobal('indexedDB', undefined);
-    await renderApp();
+    await renderLegacyApp();
 
     await selectFiles(fileInput(), [
       new File(['# imported body'], 'notes.md', { type: 'text/markdown' }),
@@ -609,7 +763,7 @@ describe('import and export', () => {
   });
 
   it('skips a file that is neither Markdown nor an envelope', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await selectFiles(fileInput(), [
       new File(['binary'], 'picture.pdf', { type: 'application/pdf' }),
@@ -621,7 +775,7 @@ describe('import and export', () => {
   });
 
   it('skips a Markdown file over the size limit without reading it', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await selectFiles(fileInput(), [
       new File(['x'.repeat(1_048_577)], 'big.md', { type: 'text/markdown' }),
@@ -632,7 +786,7 @@ describe('import and export', () => {
   });
 
   it('merges into the vault that is current when the files were read', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     let release: (text: string) => void = () => {};
     const slow = {
@@ -655,7 +809,7 @@ describe('import and export', () => {
   });
 
   it('reports a malformed envelope as an error and leaves the vault unchanged', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const before = noteNames();
 
     await selectFiles(fileInput(), [
@@ -667,7 +821,7 @@ describe('import and export', () => {
   });
 
   it('exports the vault of this tab as a JSON file', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     const blobs: Blob[] = [];
     const revoked: string[] = [];
@@ -723,7 +877,7 @@ describe('import and export', () => {
   it('keeps the export control reachable while the storage banner is showing', async () => {
     vi.stubGlobal('indexedDB', undefined);
 
-    await renderApp();
+    await renderLegacyApp();
 
     expect(alertText()).toContain('Local storage');
 
@@ -740,7 +894,7 @@ describe('import and export', () => {
   });
 
   it('clears the import alert when a later import succeeds', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await selectFiles(fileInput(), [
       new File(['not json at all'], 'vault.json', { type: 'application/json' }),
@@ -758,7 +912,7 @@ describe('import and export', () => {
   });
 
   it('moves the keyboard to the import control when the import alert is dismissed', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await selectFiles(fileInput(), [
       new File(['not json at all'], 'vault.json', { type: 'application/json' }),
@@ -774,7 +928,7 @@ describe('import and export', () => {
   });
 
   it('reports a file that cannot be read and leaves the vault unchanged', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const before = noteNames();
 
     await selectFiles(fileInput(), [
@@ -786,7 +940,7 @@ describe('import and export', () => {
   });
 
   it('names at most five skipped files in the status line', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     const files = Array.from(
       { length: 10 },
@@ -800,7 +954,7 @@ describe('import and export', () => {
   });
 
   it('imports a vault envelope that is larger than the Markdown file limit', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     const envelope = JSON.stringify({
       app: 'lattice-notes',
@@ -816,7 +970,7 @@ describe('import and export', () => {
   });
 
   it('imports the admissible notes of an envelope that is far over the note ceiling', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const before = noteNames();
 
     const entries = Array.from({ length: MAX_ENVELOPE_NOTES + 50_000 }, (_, index) => ({
@@ -835,7 +989,7 @@ describe('import and export', () => {
   }, 60_000);
 
   it('imports an envelope whose skip list is longer than the argument limit', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const before = noteNames();
 
     // The skip list is longer than the engine can spread into one call (the
@@ -857,7 +1011,7 @@ describe('import and export', () => {
   }, 120_000);
 
   it('skips the files beyond the batch limit', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     const files = Array.from({ length: 501 }, (_, index) => ({
       name: `note-${index}.md`,
@@ -875,7 +1029,7 @@ describe('import and export', () => {
 describe('compact panels', () => {
   it('turns the notes and the context into panels on a narrow screen', async () => {
     window.innerWidth = 390;
-    await renderApp();
+    await renderLegacyApp();
     await act(async () => {
       window.dispatchEvent(new Event('resize'));
     });
@@ -909,7 +1063,7 @@ describe('compact panels', () => {
 
   it('keeps both panes visible on a wide screen', async () => {
     window.innerWidth = 1280;
-    await renderApp();
+    await renderLegacyApp();
     await act(async () => {
       window.dispatchEvent(new Event('resize'));
     });
@@ -920,7 +1074,7 @@ describe('compact panels', () => {
 
   it('keeps an open panel open when Escape comes from a field', async () => {
     window.innerWidth = 390;
-    await renderApp();
+    await renderLegacyApp();
     await act(async () => {
       window.dispatchEvent(new Event('resize'));
     });
@@ -938,7 +1092,7 @@ describe('compact panels', () => {
 
   it('opens the notes panel for a search request on a narrow screen', async () => {
     window.innerWidth = 390;
-    await renderApp();
+    await renderLegacyApp();
     await act(async () => {
       window.dispatchEvent(new Event('resize'));
     });
@@ -955,7 +1109,7 @@ describe('compact panels', () => {
 
   it('opens the notes panel and keeps the keyboard on the row after a delete', async () => {
     window.innerWidth = 390;
-    await renderApp();
+    await renderLegacyApp();
     await act(async () => {
       window.dispatchEvent(new Event('resize'));
     });
@@ -971,7 +1125,7 @@ describe('compact panels', () => {
     const created = createNote(createEmptyVault(), 'Only note');
     await saveVault(created.vault);
     window.innerWidth = 390;
-    await renderApp();
+    await renderLegacyApp();
     await act(async () => {
       window.dispatchEvent(new Event('resize'));
     });
@@ -985,7 +1139,7 @@ describe('compact panels', () => {
 
   it('keeps the keyboard on the restored row after an undo', async () => {
     window.innerWidth = 390;
-    await renderApp();
+    await renderLegacyApp();
     await act(async () => {
       window.dispatchEvent(new Event('resize'));
     });
@@ -1011,7 +1165,7 @@ describe('compact panels', () => {
 
   it('closes the panel that holds the keyboard on Escape', async () => {
     window.innerWidth = 390;
-    await renderApp();
+    await renderLegacyApp();
     await act(async () => {
       window.dispatchEvent(new Event('resize'));
     });
@@ -1033,7 +1187,7 @@ describe('compact panels', () => {
 
 describe('keyboard focus', () => {
   it('focuses the rename field and returns focus to the note on cancel', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await click(buttonByName('Rename Welcome to Lattice Notes'));
     const input = container.querySelector<HTMLInputElement>('.explorer__rename-input');
@@ -1047,7 +1201,7 @@ describe('keyboard focus', () => {
   });
 
   it('returns focus to the note after a rename is committed', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await click(buttonByName('Rename Welcome to Lattice Notes'));
     const input = container.querySelector<HTMLInputElement>('.explorer__rename-input');
@@ -1059,7 +1213,7 @@ describe('keyboard focus', () => {
   });
 
   it('moves focus to the surviving note after a delete', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await click(buttonByName('Delete Welcome to Lattice Notes'));
 
@@ -1067,7 +1221,7 @@ describe('keyboard focus', () => {
   });
 
   it('keeps the keyboard in the editor when a note is created with Ctrl/Cmd+N', async () => {
-    await renderApp();
+    await renderLegacyApp();
     editorTextarea().focus();
 
     await act(async () => {
@@ -1082,7 +1236,7 @@ describe('keyboard focus', () => {
   it('moves focus to the empty state after the last note is deleted', async () => {
     const created = createNote(createEmptyVault(), 'Only note');
     await saveVault(created.vault);
-    await renderApp();
+    await renderLegacyApp();
 
     await click(buttonByName('Delete Only note'));
 
@@ -1093,7 +1247,7 @@ describe('keyboard focus', () => {
   it('keeps the keyboard on the new note row when the empty state creates a note', async () => {
     const created = createNote(createEmptyVault(), 'Only note');
     await saveVault(created.vault);
-    await renderApp();
+    await renderLegacyApp();
 
     await click(buttonByName('Delete Only note'));
     expect(document.activeElement).toBe(buttonByName('Create first note'));
@@ -1109,7 +1263,7 @@ describe('keyboard focus', () => {
     const created = createNote(createEmptyVault(), 'Only note');
     await saveVault(created.vault);
     window.innerWidth = 390;
-    await renderApp();
+    await renderLegacyApp();
     await act(async () => {
       window.dispatchEvent(new Event('resize'));
     });
@@ -1125,7 +1279,7 @@ describe('keyboard focus', () => {
   });
 
   it('keeps the keyboard in the note list when a note is opened', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const row = container.querySelectorAll<HTMLButtonElement>('.explorer__note')[1];
     if (!row) throw new Error('no second note row');
     row.focus();
@@ -1140,7 +1294,7 @@ describe('keyboard focus', () => {
     const first = createNote(createEmptyVault(), 'Roadmap', 'Plan the release.');
     const second = createNote(first.vault, 'Backlog', 'Nothing here yet.');
     await saveVault({ ...second.vault, activeNoteId: first.note.id });
-    await renderApp();
+    await renderLegacyApp();
     await fill(searchInput(), 'Roadmap');
     const result = container.querySelector<HTMLButtonElement>('.search__result');
     result?.focus();
@@ -1155,7 +1309,7 @@ describe('unreadable storage', () => {
   it('offers a retry that replaces the unreadable vault with the tab notes', async () => {
     await storeUnreadableDocument();
 
-    await renderApp();
+    await renderLegacyApp();
     expect(alertText()).toContain('Local storage');
 
     await click(buttonByName('Create first note'));
@@ -1173,7 +1327,7 @@ describe('unreadable storage', () => {
   it('never writes over a vault it could not read', async () => {
     await storeUnreadableDocument();
 
-    await renderApp();
+    await renderLegacyApp();
     await click(buttonByName('Create first note'));
     await fill(editorTextarea(), 'edited body');
     await sleep(600);
@@ -1185,7 +1339,7 @@ describe('unreadable storage', () => {
   it('refuses to write an empty tab over the unreadable vault', async () => {
     await storeUnreadableDocument();
 
-    await renderApp();
+    await renderLegacyApp();
     await click(buttonByName('Retry'));
     await waitFor(() => alertText().includes('replaces the unreadable vault'));
 
@@ -1198,7 +1352,7 @@ describe('unreadable storage', () => {
   it('refuses to overwrite a vault that became readable again', async () => {
     await storeUnreadableDocument();
 
-    await renderApp();
+    await renderLegacyApp();
     await click(buttonByName('Create first note'));
     await click(buttonByName('Retry'));
     await waitFor(() => alertText().includes('replaces the unreadable vault'));
@@ -1217,7 +1371,7 @@ describe('unreadable storage', () => {
   it('does not promise a save when the stored vault becomes readable before the retry', async () => {
     await storeUnreadableDocument();
 
-    await renderApp();
+    await renderLegacyApp();
     await click(buttonByName('Create first note'));
 
     // The stored document becomes readable before the first retry, so the
@@ -1236,6 +1390,49 @@ describe('unreadable storage', () => {
     const stored = await readRawDocument();
     expect(stored.vault.notes.map((note) => note.name)).toEqual(['Recovered note']);
   });
+
+  it('keeps saving after a retry restores the stored vault', async () => {
+    await storeUnreadableDocument();
+
+    await renderLegacyApp();
+    await click(buttonByName('Retry'));
+    await waitFor(() => alertText().includes('replaces the unreadable vault'));
+
+    // The document becomes readable before the retry, so the tab keeps the
+    // stored vault instead of replacing it with its own notes.
+    const recovered = createNote(createEmptyVault(), 'Recovered note');
+    await writeRawDocument({
+      version: 1,
+      vault: { ...recovered.vault, activeNoteId: recovered.note.id },
+    });
+
+    await click(buttonByName('Retry'));
+    await waitFor(() => statusText().includes('restored'));
+
+    await fill(editorTextarea(), 'edited after recovery');
+    await sleep(600);
+
+    const stored = await readRawDocument();
+    expect(stored.vault.notes[0]?.body).toBe('edited after recovery');
+  });
+
+  it('keeps saving after a retry replaces the unreadable vault', async () => {
+    await storeUnreadableDocument();
+
+    await renderLegacyApp();
+    await click(buttonByName('Create first note'));
+    await click(buttonByName('Retry'));
+    await waitFor(() => alertText().includes('replaces the unreadable vault'));
+
+    await click(buttonByName('Retry'));
+    await waitFor(async () => (await readRawDocument()).version === 1);
+
+    await fill(editorTextarea(), 'second body');
+    await sleep(600);
+
+    const stored = await readRawDocument();
+    expect(stored.vault.notes[0]?.body).toBe('second body');
+  });
 });
 
 describe('search', () => {
@@ -1243,7 +1440,7 @@ describe('search', () => {
     const first = createNote(createEmptyVault(), 'Roadmap', 'Plan the release.');
     const second = createNote(first.vault, 'Backlog', 'Nothing here yet.');
     await saveVault({ ...second.vault, activeNoteId: first.note.id });
-    await renderApp();
+    await renderLegacyApp();
   }
 
   it('opens a note found by its title', async () => {
@@ -1288,7 +1485,7 @@ describe('search', () => {
     const created = createNote(createEmptyVault(), 'Roadmap', 'Plan the release.');
     await saveVault(deleteNote(created.vault, created.note.id).vault);
 
-    await renderApp();
+    await renderLegacyApp();
     await fill(searchInput(), 'Roadmap');
 
     expect(container.querySelector('.search__result')).toBeNull();
@@ -1311,7 +1508,7 @@ describe('search', () => {
 
 describe('command palette', () => {
   it('opens with Ctrl+K, takes the keyboard, and closes with Escape', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await openPalette();
 
@@ -1324,7 +1521,7 @@ describe('command palette', () => {
   });
 
   it('returns focus to the trigger when it closes', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const trigger = buttonByName('Commands');
     trigger.focus();
 
@@ -1337,7 +1534,7 @@ describe('command palette', () => {
   });
 
   it('runs the New note command', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const before = noteNames().length;
 
     await openPalette();
@@ -1354,7 +1551,7 @@ describe('command palette', () => {
     const first = createNote(createEmptyVault(), 'Alpha', 'Body one.');
     const second = createNote(first.vault, 'Beta', 'Body two.');
     await saveVault({ ...second.vault, activeNoteId: first.note.id });
-    await renderApp();
+    await renderLegacyApp();
 
     await openPalette();
     await fill(paletteInput(), 'Beta');
@@ -1370,7 +1567,7 @@ describe('command palette', () => {
   });
 
   it('moves the active option with the arrow keys', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await openPalette();
     expect(paletteOptions()).toHaveLength(2);
@@ -1383,7 +1580,7 @@ describe('command palette', () => {
   });
 
   it('names the palette field and says whether it has options', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await openPalette();
 
@@ -1396,7 +1593,7 @@ describe('command palette', () => {
   });
 
   it('does not create a note behind the open palette', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const before = noteNames().length;
 
     await openPalette();
@@ -1411,7 +1608,7 @@ describe('command palette', () => {
   });
 
   it('keeps a single polite live region with the palette open', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     await openPalette();
     await fill(searchInput(), 'Getting');
@@ -1429,7 +1626,7 @@ describe('preview links', () => {
     );
     await saveVault({ ...created.vault, activeNoteId: created.note.id });
 
-    await renderApp();
+    await renderLegacyApp();
     const anchors = Array.from(container.querySelectorAll<HTMLAnchorElement>('.preview__body a'));
     expect(anchors).toHaveLength(2);
 
@@ -1446,7 +1643,7 @@ describe('linked notes', () => {
   it('creates a missing wiki target once and selects it', async () => {
     const created = createNote(createEmptyVault(), 'Alpha', 'See [[Ghost]] now.');
     await saveVault({ ...created.vault, activeNoteId: created.note.id });
-    await renderApp();
+    await renderLegacyApp();
 
     await click(container.querySelector('.preview__wikilink') as Element);
 
@@ -1464,7 +1661,7 @@ describe('linked notes', () => {
   it('keeps the keyboard in the note it opened', async () => {
     const created = createNote(createEmptyVault(), 'Alpha', 'See [[Ghost]] now.');
     await saveVault({ ...created.vault, activeNoteId: created.note.id });
-    await renderApp();
+    await renderLegacyApp();
 
     await click(container.querySelector('.preview__wikilink') as Element);
 
@@ -1475,7 +1672,7 @@ describe('linked notes', () => {
     const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]] now.');
     const second = createNote(first.vault, 'Beta', 'Beta body.');
     await saveVault({ ...second.vault, activeNoteId: second.note.id });
-    await renderApp();
+    await renderLegacyApp();
 
     // The graph follows the vault at background priority, so it settles later.
     await waitFor(
@@ -1498,7 +1695,7 @@ describe('linked notes', () => {
     const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]] now.');
     const second = createNote(first.vault, 'Beta', 'Beta body.');
     await saveVault({ ...second.vault, activeNoteId: second.note.id });
-    await renderApp();
+    await renderLegacyApp();
 
     // Sample the section while the deferred graph settles: it may show the
     // pending state, but it must never claim there are no backlinks.
@@ -1522,7 +1719,7 @@ describe('linked notes', () => {
   it('shows the genuine empty state once the graph has settled', async () => {
     const created = createNote(createEmptyVault(), 'Solo', 'Nothing links here.');
     await saveVault({ ...created.vault, activeNoteId: created.note.id });
-    await renderApp();
+    await renderLegacyApp();
 
     await waitFor(
       () =>
@@ -1543,7 +1740,7 @@ describe('linked notes', () => {
     const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]] and [[Ghost]].');
     const second = createNote(first.vault, 'Beta', 'Beta body.');
     await saveVault({ ...second.vault, activeNoteId: first.note.id });
-    await renderApp();
+    await renderLegacyApp();
 
     const links = container.querySelector('.context__links');
     expect(links?.textContent).toContain('Beta');
@@ -1562,7 +1759,7 @@ describe('linked notes', () => {
     const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]].');
     const second = createNote(first.vault, 'Beta', 'See [[Alpha]].');
     await saveVault({ ...second.vault, activeNoteId: first.note.id });
-    await renderApp();
+    await renderLegacyApp();
 
     await waitFor(() => container.querySelector('.graph__node') !== null);
 
@@ -1579,7 +1776,7 @@ describe('linked notes', () => {
     const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]].');
     const second = createNote(first.vault, 'Beta', 'See [[Alpha]].');
     await saveVault({ ...second.vault, activeNoteId: first.note.id });
-    await renderApp();
+    await renderLegacyApp();
 
     await waitFor(() => container.querySelector('.graph__list button') !== null);
     const button = container.querySelector<HTMLButtonElement>('.graph__list button');
@@ -1616,7 +1813,7 @@ describe('toolbar and views', () => {
   }
 
   it('shows the product name and the primary actions in the toolbar', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     const toolbar = container.querySelector('.workspace__toolbar');
     expect(toolbar).not.toBeNull();
@@ -1629,7 +1826,7 @@ describe('toolbar and views', () => {
   });
 
   it('opens the files disclosure and closes it with Escape', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const files = filesDisclosure();
     const summary = files.querySelector('summary') as HTMLElement;
 
@@ -1644,7 +1841,7 @@ describe('toolbar and views', () => {
   });
 
   it('closes the files disclosure after an action and gives the keyboard back to the summary', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const files = filesDisclosure();
     const summary = files.querySelector('summary') as HTMLElement;
     await click(summary);
@@ -1657,7 +1854,7 @@ describe('toolbar and views', () => {
   });
 
   it('puts the rename and delete actions behind a per-note disclosure', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     const disclosure = noteDisclosure();
     expect(disclosure.querySelector('summary')?.textContent).toBe('Actions');
@@ -1670,7 +1867,7 @@ describe('toolbar and views', () => {
   });
 
   it('renames a note through the per-note disclosure', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const disclosure = noteDisclosure();
     await click(disclosure.querySelector('summary') as Element);
     expect(disclosure.open).toBe(true);
@@ -1691,7 +1888,7 @@ describe('toolbar and views', () => {
   });
 
   it('closes the per-note disclosure when a note is deleted', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const disclosure = noteDisclosure();
     await click(disclosure.querySelector('summary') as Element);
     expect(disclosure.open).toBe(true);
@@ -1703,7 +1900,7 @@ describe('toolbar and views', () => {
   });
 
   it('closes the per-note disclosure with Escape and gives the keyboard back to the summary', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const disclosure = noteDisclosure();
     const summary = disclosure.querySelector('summary') as HTMLElement;
     await click(summary);
@@ -1716,7 +1913,7 @@ describe('toolbar and views', () => {
   });
 
   it('shows the active note title and the view modes in the header', async () => {
-    await renderApp();
+    await renderLegacyApp();
 
     expect(container.querySelector('.workspace__doc-title')?.textContent).toBe(
       'Welcome to Lattice Notes',
@@ -1726,7 +1923,7 @@ describe('toolbar and views', () => {
   });
 
   it('defaults to split on a wide screen and to write on a narrow one', async () => {
-    await renderApp();
+    await renderLegacyApp();
     expect(viewRadio('split').checked).toBe(true);
 
     window.innerWidth = 390;
@@ -1735,7 +1932,7 @@ describe('toolbar and views', () => {
   });
 
   it('keeps the note text when the view changes', async () => {
-    await renderApp();
+    await renderLegacyApp();
     await fill(editorTextarea(), 'kept body');
 
     // The writer's place in the text is a part of the draft.
@@ -1763,7 +1960,7 @@ describe('toolbar and views', () => {
     const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]].');
     const second = createNote(first.vault, 'Beta', 'See [[Alpha]].');
     await saveVault({ ...second.vault, activeNoteId: first.note.id });
-    await renderApp();
+    await renderLegacyApp();
     await waitFor(() => container.querySelector('.graph__node') !== null);
 
     await click(viewRadio('read'));
@@ -1780,7 +1977,7 @@ describe('toolbar and views', () => {
   });
 
   it('keeps the scroll offset of the editor and the preview across a view change', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const textarea = editorTextarea();
 
     textarea.scrollTop = 250;
@@ -1794,7 +1991,7 @@ describe('toolbar and views', () => {
   });
 
   it('keeps the scroll offset of the preview across a view change', async () => {
-    await renderApp();
+    await renderLegacyApp();
     const preview = container.querySelector('.preview') as HTMLElement;
     if (!preview) throw new Error('no preview');
 
@@ -1810,7 +2007,7 @@ describe('toolbar and views', () => {
     const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]] now.');
     const second = createNote(first.vault, 'Beta', 'Beta body.');
     await saveVault({ ...second.vault, activeNoteId: first.note.id });
-    await renderApp();
+    await renderLegacyApp();
 
     await click(viewRadio('read'));
     await click(container.querySelector('.preview__wikilink') as Element);
@@ -1823,7 +2020,7 @@ describe('toolbar and views', () => {
   it('creates a missing wiki target in read mode and keeps the keyboard on the visible content', async () => {
     const created = createNote(createEmptyVault(), 'Alpha', 'See [[Ghost]] now.');
     await saveVault({ ...created.vault, activeNoteId: created.note.id });
-    await renderApp();
+    await renderLegacyApp();
 
     await click(viewRadio('read'));
     await click(container.querySelector('.preview__wikilink') as Element);
@@ -1836,7 +2033,7 @@ describe('toolbar and views', () => {
     const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]] now.');
     const second = createNote(first.vault, 'Beta', 'Beta body.');
     await saveVault({ ...second.vault, activeNoteId: second.note.id });
-    await renderApp();
+    await renderLegacyApp();
     await waitFor(() => container.querySelector('nav[aria-label="Backlinks"] button') !== null);
 
     await click(viewRadio('read'));
@@ -1850,7 +2047,7 @@ describe('toolbar and views', () => {
     const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]].');
     const second = createNote(first.vault, 'Beta', 'See [[Alpha]].');
     await saveVault({ ...second.vault, activeNoteId: first.note.id });
-    await renderApp();
+    await renderLegacyApp();
     await waitFor(() => container.querySelector('.graph__list button') !== null);
 
     await click(viewRadio('read'));
@@ -1862,11 +2059,364 @@ describe('toolbar and views', () => {
 
   it('opens the command palette on a narrow screen while the notes panel is closed', async () => {
     window.innerWidth = 390;
-    await renderApp();
+    await renderLegacyApp();
     expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(true);
 
     await click(buttonByName('Commands'));
 
     expect(paletteDialog().hasAttribute('open')).toBe(true);
+  });
+});
+
+describe('first use', () => {
+  function onboardingName(): HTMLInputElement {
+    const found = container.querySelector<HTMLInputElement>('#onboarding-name');
+    if (!found) throw new Error('no onboarding name field');
+    return found;
+  }
+
+  async function submitOnboarding(): Promise<void> {
+    const form = container.querySelector('form.onboarding__form');
+    if (!form) throw new Error('no onboarding form');
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+  }
+
+  it('welcomes a genuine first use instead of a seeded vault', async () => {
+    await renderApp();
+
+    expect(container.querySelector('.onboarding')).not.toBeNull();
+    expect(container.querySelector('.workspace')).toBeNull();
+    // Nothing is created behind the user's back.
+    expect(container.textContent).not.toContain('Welcome to Lattice Notes');
+    expect(await loadCatalog()).toBeNull();
+  });
+
+  it('creates the vault once and puts the keyboard on the content', async () => {
+    await renderApp();
+
+    await click(container.querySelector('input[value="example"]') as Element);
+    await submitOnboarding();
+
+    await waitFor(() => container.querySelector('.workspace') !== null);
+    expect(noteNames()).toContain('Welcome to Lattice Notes');
+    await waitFor(() => document.activeElement === editorTextarea());
+
+    const catalog = await loadCatalog();
+    expect(catalog?.vaults).toHaveLength(1);
+  });
+
+  it('never shows the onboarding to a user whose notes are already stored', async () => {
+    await saveVault(createSeedVault());
+    await renderApp();
+
+    expect(container.querySelector('.onboarding')).toBeNull();
+    expect(container.querySelector('.workspace')).not.toBeNull();
+    expect(noteNames()).toContain('Welcome to Lattice Notes');
+  });
+
+  it('shows an actionable error for a corrupt catalog and never the first use', async () => {
+    await writeRawCatalog({ version: 1, activeVaultId: 'gone', vaults: 'not a list' });
+    await renderApp();
+
+    expect(container.querySelector('.onboarding')).toBeNull();
+    expect(alertText()).toContain('Local storage');
+    expect(buttonByName('Retry')).not.toBeNull();
+    // Nothing was seeded and nothing was created.
+    expect(noteNames()).toHaveLength(0);
+    // The broken catalog is left as it is.
+    await expect(loadCatalog()).rejects.toThrow('unreadable');
+  });
+
+  it('restores a backup into a new vault on the first use', async () => {
+    const envelope = JSON.stringify({
+      app: 'lattice-notes',
+      formatVersion: 1,
+      notes: [{ name: 'Kept', body: '# kept body', createdAt: '2024-01-02T03:04:05.000Z' }],
+    });
+
+    await renderApp();
+    await click(container.querySelector('input[value="restore"]') as Element);
+    const file = container.querySelector<HTMLInputElement>('input[type="file"]');
+    if (!file) throw new Error('no backup input');
+    Object.defineProperty(file, 'files', {
+      configurable: true,
+      value: [new File([envelope], 'vault.json', { type: 'application/json' })],
+    });
+    await act(async () => {
+      file.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await fill(onboardingName(), 'Restored');
+    await submitOnboarding();
+
+    await waitFor(() => container.querySelector('.workspace') !== null);
+    expect(noteNames()).toEqual(['Kept']);
+    expect(container.querySelector('.preview__body')?.textContent).toContain('kept body');
+  });
+});
+
+describe('guarded vault lifecycle', () => {
+  it('writes the open vault before another one is opened', async () => {
+    await renderLegacyApp();
+    await storeSecondVault();
+
+    await fill(editorTextarea(), 'body of A');
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+
+    await waitFor(() => noteTitle() === 'Only in B');
+    const stored = await loadVault('current');
+    expect(stored?.notes.some((note) => note.body === 'body of A')).toBe(true);
+  });
+
+  it('keeps the notes of two vaults apart', async () => {
+    await renderLegacyApp();
+    await storeSecondVault();
+
+    await fill(editorTextarea(), 'body of A');
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+    await waitFor(() => noteTitle() === 'Only in B');
+
+    expect(editorTextarea().value).toBe('body of B');
+
+    await openVaultManager();
+    await clickManagerButton('Open My vault');
+    await waitFor(() => noteTitle() === 'Welcome to Lattice Notes');
+
+    expect(editorTextarea().value).toBe('body of A');
+  });
+
+  it('keeps the vaults apart after a reload', async () => {
+    await renderLegacyApp();
+    await storeSecondVault();
+
+    await fill(editorTextarea(), 'body of A');
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+    await waitFor(() => noteTitle() === 'Only in B');
+    await remountApp();
+
+    expect(noteTitle()).toBe('Only in B');
+    expect(editorTextarea().value).toBe('body of B');
+  });
+
+  it('never marks the new vault as saved when the write of the old one lands late', async () => {
+    await renderLegacyApp();
+    const second = await storeSecondVault();
+    // The first write is quick, the flush of the switch waits and the write
+    // of the last edit waits the longest, so it lands after the switch.
+    storage.delays.set('current', [0, 300, 400]);
+
+    await fill(editorTextarea(), 'draft one');
+    await sleep(250);
+    await fill(editorTextarea(), 'draft two');
+    await sleep(50);
+
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+    // The writer keeps typing while the switch is running.
+    await sleep(50);
+    await fill(editorTextarea(), 'draft three');
+
+    await waitFor(() => noteTitle() === 'Only in B');
+    await waitFor(() => storage.writes.filter((write) => write.key === 'current').length >= 3);
+    await sleep(600);
+
+    expect(statusText()).toContain('Opened');
+    expect(statusText()).not.toContain('Saved to local storage');
+    // The late write went to the vault it belongs to and not to the new one.
+    const storedSecond = await loadVault(second);
+    expect(storedSecond?.notes.some((note) => note.body.includes('draft'))).toBe(false);
+  });
+
+  it('runs two switches one after the other and keeps the last request', async () => {
+    await renderLegacyApp();
+    const second = await storeSecondVault();
+    await storeThirdVault();
+    storage.readDelays.set(second, 120);
+
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+    await clickManagerButton('Open Third vault');
+
+    await waitFor(() => noteTitle() === 'Only in C');
+    expect(statusText()).toContain('Third vault');
+  });
+
+  it('keeps the open vault and its draft when the source cannot be written', async () => {
+    await renderLegacyApp();
+    await storeSecondVault();
+    storage.failures.set('current', 2);
+
+    await fill(editorTextarea(), 'draft of A');
+    await sleep(300);
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+
+    await waitFor(() => alertText().includes('could not be saved'));
+    expect(noteTitle()).toBe('Welcome to Lattice Notes');
+    expect(editorTextarea().value).toBe('draft of A');
+    expect(buttonByName('Export vault')).not.toBeNull();
+    const catalog = await loadCatalog();
+    expect(catalog?.activeVaultId).toBe('current');
+  });
+
+  it('keeps the open vault and its draft when the target cannot be read', async () => {
+    await renderLegacyApp();
+    const second = await storeSecondVault();
+    storage.readFailures.set(second, 1);
+
+    await fill(editorTextarea(), 'draft of A');
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+
+    await waitFor(() => alertText().includes('could not be opened'));
+    expect(noteTitle()).toBe('Welcome to Lattice Notes');
+    expect(editorTextarea().value).toBe('draft of A');
+    expect(buttonByName('Export vault')).not.toBeNull();
+    const catalog = await loadCatalog();
+    expect(catalog?.activeVaultId).toBe('current');
+  });
+});
+
+describe('vault manager', () => {
+  it('opens the manager from the name of the open vault', async () => {
+    await renderLegacyApp();
+    await storeSecondVault();
+
+    expect(buttonByName('Vaults: My vault')).not.toBeNull();
+    await openVaultManager();
+
+    expect(container.querySelector('dialog.vaults')?.hasAttribute('open')).toBe(true);
+    await waitFor(() => container.textContent?.includes('Second vault') === true);
+  });
+
+  it('refuses to archive the open vault and says why', async () => {
+    await renderLegacyApp();
+    await openVaultManager();
+
+    await clickManagerButton('Archive My vault');
+
+    expect(container.querySelector('.vaults__reason')?.textContent).toContain('cannot be archived');
+    expect(buttonByName('Vaults: My vault')).not.toBeNull();
+  });
+
+  it('archives a vault that is not open', async () => {
+    await renderLegacyApp();
+    await storeSecondVault();
+    await openVaultManager();
+
+    await clickManagerButton('Archive Second vault');
+    await waitFor(() => statusText().includes('archived'));
+
+    expect(container.textContent).toContain('Archived');
+    const catalog = await loadCatalog();
+    expect(catalog?.vaults.find((member) => member.name === 'Second vault')?.archivedAt).not.toBeNull();
+  });
+
+  it('renames the vault and shows the new name in the header', async () => {
+    await renderLegacyApp();
+    await openVaultManager();
+
+    await clickManagerButton('Rename My vault');
+    const input = container.querySelector<HTMLInputElement>('.vaults__rename-input');
+    if (!input) throw new Error('no rename input');
+    await fill(input, 'Renamed vault');
+    const save = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save name',
+    );
+    await click(save as Element);
+
+    await waitFor(() => statusText().includes('Renamed'));
+    expect(buttonByName('Vaults: Renamed vault')).not.toBeNull();
+    // The explorer says which vault the notes belong to.
+    expect(container.querySelector('.workspace__vault-label')?.textContent).toBe('Renamed vault');
+  });
+});
+
+describe('undo of a vault', () => {
+  it('keeps the undo of a vault with the vault', async () => {
+    await renderLegacyApp();
+    await storeSecondVault();
+
+    await click(buttonByName('Delete Welcome to Lattice Notes'));
+    expect(container.querySelectorAll('.workspace__undo')).toHaveLength(1);
+
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+    await waitFor(() => noteTitle() === 'Only in B');
+    expect(container.querySelectorAll('.workspace__undo')).toHaveLength(0);
+
+    await openVaultManager();
+    await clickManagerButton('Open My vault');
+    await waitFor(() => noteTitle() === 'Getting started');
+    expect(container.querySelectorAll('.workspace__undo')).toHaveLength(1);
+
+    await click(buttonByName('Undo delete'));
+    expect(noteNames()).toContain('Welcome to Lattice Notes');
+  });
+
+  it('keeps the undo after the vault was renamed', async () => {
+    await renderLegacyApp();
+
+    await click(buttonByName('Delete Welcome to Lattice Notes'));
+    await openVaultManager();
+    await clickManagerButton('Rename My vault');
+    const input = container.querySelector<HTMLInputElement>('.vaults__rename-input');
+    if (!input) throw new Error('no rename input');
+    await fill(input, 'Renamed vault');
+    const save = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save name',
+    );
+    await click(save as Element);
+    await waitFor(() => statusText().includes('Renamed'));
+
+    await click(buttonByName('Undo delete'));
+    expect(noteNames()).toContain('Welcome to Lattice Notes');
+  });
+});
+
+describe('import of a vault', () => {
+  it('refuses to import when the vault changed while the file was read', async () => {
+    await renderLegacyApp();
+    await storeSecondVault();
+
+    let release: (text: string) => void = () => {};
+    const slow = {
+      name: 'notes.md',
+      size: 12,
+      text: () =>
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+    };
+    await selectFiles(fileInput(), [slow]);
+
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+    await waitFor(() => noteTitle() === 'Only in B');
+
+    release('# imported');
+    await waitFor(() => alertText().includes('vault switched during the import'));
+
+    expect(noteNames()).not.toContain('notes');
+    expect(noteNames()).toEqual(['Only in B']);
+  });
+});
+
+describe('scroll of the panes', () => {
+  it('does not restore the scroll offset of another note', async () => {
+    await renderLegacyApp();
+
+    await click(container.querySelector('input[value="read"]') as Element);
+    const preview = container.querySelector('.preview') as HTMLElement;
+    if (!preview) throw new Error('no preview');
+    preview.scrollTop = 120;
+
+    await click(buttonByName('Getting started'));
+
+    expect(preview.scrollTop).toBe(0);
   });
 });

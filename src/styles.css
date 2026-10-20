@@ -250,12 +250,14 @@ a {
 
 .workspace__actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
 }
 
 .workspace__new,
 .workspace__command,
+.workspace__vault,
 .workspace__file-action {
   font: inherit;
   font-size: var(--text-sm);
@@ -299,6 +301,21 @@ a {
   color: var(--color-ink);
   background: var(--color-surface-raised);
   border: var(--border-width) solid var(--color-border-strong);
+}
+
+/* The name of the open vault opens the manager of the vaults. */
+.workspace__vault {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-ink-muted);
+  background: none;
+  border: var(--border-width) solid transparent;
+}
+
+.workspace__vault:hover {
+  color: var(--color-ink);
+  border-color: var(--color-ink-faint);
 }
 
 .workspace__files {
@@ -403,10 +420,21 @@ a {
 .workspace__explorer {
   grid-area: explorer;
   display: flex;
+  flex-direction: column;
   min-width: 0;
   background: var(--color-surface);
   border-right: var(--border-width) solid var(--color-border);
   overflow: hidden;
+}
+
+/* The name of the open vault says which vault the notes belong to. */
+.workspace__vault-label {
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-ink);
+  border-bottom: var(--border-width) solid var(--color-border);
+  overflow-wrap: anywhere;
 }
 
 .workspace__main {
@@ -565,7 +593,8 @@ a {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
 }
 
 .explorer__header {
@@ -1324,6 +1353,274 @@ a {
   overflow-wrap: anywhere;
 }
 
+/* Onboarding -------------------------------------------------------------- */
+
+.onboarding {
+  display: grid;
+  place-items: start center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: var(--space-6) var(--space-4);
+  overflow-y: auto;
+}
+
+.onboarding__panel {
+  width: min(34rem, 100%);
+  padding: var(--space-6);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.onboarding__title {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  color: var(--color-ink);
+}
+
+.onboarding__intro {
+  margin-top: var(--space-3);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
+
+.onboarding__form {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.onboarding__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.onboarding__name,
+.onboarding__file {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  background: var(--color-surface-sunken);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.onboarding__choices {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.onboarding__legend {
+  padding: 0 var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.onboarding__choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-target);
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  cursor: pointer;
+}
+
+.onboarding__choice input {
+  accent-color: var(--color-accent);
+  margin: 0;
+  font: inherit;
+}
+
+.onboarding__restore {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.onboarding__note {
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+}
+
+.onboarding__error {
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+.onboarding__create {
+  justify-self: start;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-accent-ink);
+  background: var(--color-accent);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+}
+
+.onboarding__create[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* Vault manager ----------------------------------------------------------- */
+
+.vaults {
+  width: min(34rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100dvh - 2rem);
+  padding: 0;
+  color: var(--color-ink);
+  background: var(--color-surface-raised);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  overflow-y: auto;
+}
+
+.vaults::backdrop {
+  background: rgb(0 0 0 / 0.5);
+}
+
+.vaults__title {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.vaults__intro {
+  padding: var(--space-3) var(--space-4) 0;
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+}
+
+.vaults__list {
+  list-style: none;
+  padding: 0 var(--space-4);
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.vaults__item {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+/* A long name wraps inside the row and never pushes the dialog open. */
+.vaults__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.vaults__name {
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+
+.vaults__state {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+}
+
+.vaults__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.vaults__reason {
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+}
+
+.vaults__action {
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--color-ink);
+  background: var(--color-surface-sunken);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
+.vaults__action[aria-disabled='true'] {
+  color: var(--color-ink-faint);
+  border-color: var(--color-border);
+  cursor: not-allowed;
+}
+
+.vaults__rename,
+.vaults__create-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.vaults__rename-input,
+.vaults__create-input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  background: var(--color-surface-sunken);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.vaults__label {
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+}
+
+.vaults__create {
+  padding: var(--space-3) var(--space-4);
+}
+
+.vaults__done {
+  margin: 0 var(--space-4) var(--space-4);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  background: var(--color-surface-sunken);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+}
+
 /* Compact layout ---------------------------------------------------------- */
 
 @media (max-width: 48rem) {
@@ -1377,7 +1674,7 @@ a {
   }
 
   .explorer {
-    height: auto;
+    flex: none;
   }
 
   .explorer__list {

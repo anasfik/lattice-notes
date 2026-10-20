@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ChangeEvent, RefObject } from 'react';
 
 import { activeNotes } from '../domain/vault';
@@ -47,6 +47,8 @@ export interface WorkspaceProps {
   noteNames: ReadonlySet<string>;
   /** True while the graph still trails the vault. */
   graphPending?: boolean;
+  /** The name of the open vault, or null when there is none. */
+  vaultName?: string | null;
   searchInputRef?: RefObject<HTMLInputElement | null>;
   editorRef?: RefObject<HTMLTextAreaElement | null>;
   /** The visible preview, so the keyboard can go to the view that is shown. */
@@ -54,8 +56,11 @@ export interface WorkspaceProps {
   fileInputRef?: RefObject<HTMLInputElement | null>;
   /** Counts the requests to focus the search field, which opens the notes. */
   searchRequest?: number;
+  /** Counts the requests to put the keyboard on the visible content. */
+  focusContentRequest?: number;
   /** Puts the keyboard on the content the reader can see. */
   focusContent?: () => void;
+  onOpenVaults(): void;
   onOpenPalette(): void;
   onRetry(): void;
   onDismissImport(): void;
@@ -104,10 +109,14 @@ export default function Workspace(props: WorkspaceProps) {
   const filesRef = useRef<HTMLDetailsElement>(null);
   const filesSummaryRef = useRef<HTMLElement>(null);
   const searchPending = useRef(false);
-  // The scroll offset of the two panes, so a change of the view does not
-  // lose the place of the writer. A ref and not a state, so the typing
-  // never re-renders the workspace.
-  const scrollRef = useRef({ editor: 0, preview: 0 });
+  // The scroll offset of the two panes, one entry per note, so a change of
+  // the view or of the note does not move the reader to another place. A ref
+  // and not a state, so the typing never re-renders the workspace.
+  const scrollRef = useRef<Record<string, { editor: number; preview: number }>>({});
+  // The note that is on the screen. Its offsets are its own.
+  const noteKey = props.vault.activeNoteId ?? '';
+  const noteKeyRef = useRef(noteKey);
+  noteKeyRef.current = noteKey;
 
   // The panels are always open on a wide screen and closed by default on a
   // narrow one, where the note is the primary content.
@@ -201,6 +210,13 @@ export default function Workspace(props: WorkspaceProps) {
     props.searchInputRef?.current?.focus();
   }, [notesExpanded, props.searchRequest, props.searchInputRef]);
 
+  // A request to focus the content puts the keyboard on the pane that is on
+  // the screen, so the reader can write at once.
+  useEffect(() => {
+    if (!props.focusContentRequest) return;
+    props.focusContent?.();
+  }, [props.focusContentRequest, props.focusContent]);
+
   /** Closes the files disclosure and gives the keyboard back to its summary. */
   const closeFiles = () => {
     const details = filesRef.current;
@@ -210,24 +226,28 @@ export default function Workspace(props: WorkspaceProps) {
   };
 
   /**
-   * Remembers the scroll offset of the panes that are on the screen.
+   * Remembers where the reader is in the note that is on the screen.
    *
-   * A pane that is hidden loses its scrolling box, so the offset has to be
-   * put back when the pane comes back.
+   * The offset belongs to the note, so a note that is opened later starts at
+   * its own place and never at the place of the note before it.
    */
-  const captureScroll = () => {
+  const captureScroll = useCallback(() => {
+    const key = noteKeyRef.current;
+    const entry = scrollRef.current[key] ?? { editor: 0, preview: 0 };
     const editor = props.editorRef?.current;
-    if (editor && !isHidden(editor)) scrollRef.current.editor = editor.scrollTop;
+    if (editor && !isHidden(editor)) entry.editor = editor.scrollTop;
     const preview = props.previewRef?.current;
-    if (preview && !isHidden(preview)) scrollRef.current.preview = preview.scrollTop;
-  };
+    if (preview && !isHidden(preview)) entry.preview = preview.scrollTop;
+    scrollRef.current[key] = entry;
+  }, [props.editorRef, props.previewRef]);
 
-  /** Puts the scroll offset of the panes that are on the screen back. */
+  /** Puts the reader back where they were in the note that is on the screen. */
   const restoreScroll = () => {
+    const entry = scrollRef.current[noteKey] ?? { editor: 0, preview: 0 };
     const editor = props.editorRef?.current;
-    if (editor && !isHidden(editor)) editor.scrollTop = scrollRef.current.editor;
+    if (editor && !isHidden(editor)) editor.scrollTop = entry.editor;
     const preview = props.previewRef?.current;
-    if (preview && !isHidden(preview)) preview.scrollTop = scrollRef.current.preview;
+    if (preview && !isHidden(preview)) preview.scrollTop = entry.preview;
   };
 
   const changeView = (next: ViewMode) => {
@@ -235,11 +255,26 @@ export default function Workspace(props: WorkspaceProps) {
     setView(next);
   };
 
-  // The panes are on the screen again, so the offset of the writer goes back
-  // where it was.
+  // The panes report their own place, so the offset of a note belongs to it
+  // and follows the reader from one note to the next.
+  useEffect(() => {
+    const editor = props.editorRef?.current;
+    const preview = props.previewRef?.current;
+    if (!editor && !preview) return;
+    const onScroll = () => captureScroll();
+    editor?.addEventListener('scroll', onScroll);
+    preview?.addEventListener('scroll', onScroll);
+    return () => {
+      editor?.removeEventListener('scroll', onScroll);
+      preview?.removeEventListener('scroll', onScroll);
+    };
+  }, [captureScroll, props.editorRef, props.previewRef]);
+
+  // The panes are on the screen again, so the offset of the reader goes back
+  // where it was. A note that has no offset of its own starts at the top.
   useLayoutEffect(() => {
     restoreScroll();
-  }, [view]);
+  }, [view, noteKey]);
 
   return (
     <div className="workspace">
@@ -253,6 +288,17 @@ export default function Workspace(props: WorkspaceProps) {
           </div>
 
           <div className="workspace__actions">
+            {props.vaultName ? (
+              <button
+                type="button"
+                className="workspace__vault"
+                aria-haspopup="dialog"
+                aria-label={`Vaults: ${props.vaultName}`}
+                onClick={props.onOpenVaults}
+              >
+                {props.vaultName}
+              </button>
+            ) : null}
             <button type="button" className="workspace__new" onClick={props.onCreate}>
               New note
             </button>
@@ -339,6 +385,9 @@ export default function Workspace(props: WorkspaceProps) {
         id={NOTES_PANEL_ID}
         hidden={!notesExpanded}
       >
+        {props.vaultName ? (
+          <p className="workspace__vault-label">{props.vaultName}</p>
+        ) : null}
         <Explorer
           notes={notes}
           trashed={trashed}

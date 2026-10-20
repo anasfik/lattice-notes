@@ -1,9 +1,14 @@
 /**
  * Lattice Notes application shell.
  *
- * App owns the in-memory vault, persistence, undo, and status messages. The
- * components stay presentational so later waves can extend them without
- * rewriting the data flow.
+ * App owns the in-memory vault, its persistence, the undo of every vault and
+ * the status messages. The components stay presentational so later waves can
+ * extend them without rewriting the data flow.
+ *
+ * The open vault has an identity: its id and a generation that changes with
+ * every switch. Every write and every import takes the identity before it
+ * does its work, so a write that lands after a switch cannot mark another
+ * vault as saved and a file can never be merged into another vault.
  */
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
@@ -30,12 +35,26 @@ import {
 } from './domain/transfer';
 import type { ImportSkip, SkipReason } from './domain/transfer';
 import type { Vault } from './domain/types';
-import { createSeedVault, loadVault, saveVault } from './storage/vaultRepository';
+import {
+  archiveStoredVault,
+  createStoredVault,
+  loadCatalog,
+  loadVault,
+  openStoredVault,
+  renameStoredVault,
+  restoreStoredVault,
+  saveVault,
+} from './storage/vaultRepository';
+import type { VaultCatalog } from './storage/vaultRepository';
 import CommandPalette from './components/CommandPalette';
+import Onboarding from './components/Onboarding';
+import VaultManager from './components/VaultManager';
 import Workspace, { isHidden } from './components/Workspace';
 import type { FocusTarget } from './components/Explorer';
 
 const SAVE_DEBOUNCE_MS = 200;
+/** The key of the legacy document, used by a session that has no vault. */
+const LEGACY_VAULT_ID = 'current';
 
 /** The Markdown extensions the import accepts, without the dot. */
 const MARKDOWN_EXTENSIONS = ['md', 'markdown', 'txt'];
@@ -47,29 +66,57 @@ const SKIP_REASONS: Record<SkipReason, string> = {
   'unreadable-content': 'not readable',
 };
 
-type StorageMode = 'loading' | 'ready' | 'memory-only';
+/** The ways the app can be before the workspace is on the screen. */
+type Phase = 'loading' | 'onboarding' | 'workspace';
+/** Whether the storage holds the notes of this tab. */
+type StorageMode = 'ready' | 'memory-only';
+
+/** The identity of the vault that is on the screen. */
+interface Identity {
+  /** The id of the open vault, or null when the session has none. */
+  id: string | null;
+  /** A counter that changes whenever another vault takes the screen. */
+  generation: number;
+}
 
 export default function App() {
+  const [phase, setPhase] = useState<Phase>('loading');
   const [vault, setVault] = useState<Vault>(() => createEmptyVault());
+  const [vaultId, setVaultId] = useState<string | null>(null);
+  const [catalog, setCatalog] = useState<VaultCatalog | null>(null);
+  const [storageMode, setStorageMode] = useState<StorageMode>('memory-only');
   const [status, setStatus] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<StorageMode>('loading');
   const [retryKind, setRetryKind] = useState<'load' | 'save'>('load');
-  const [undo, setUndo] = useState<{ id: string; name: string } | null>(null);
+  const [undoSlots, setUndoSlots] = useState<Record<string, { id: string; name: string }>>({});
   const [focusNote, setFocusNote] = useState<FocusTarget | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [managerOpen, setManagerOpen] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [searchRequest, setSearchRequest] = useState(0);
+  const [focusContentRequest, setFocusContentRequest] = useState(0);
 
   const vaultRef = useRef(vault);
-  const baseRef = useRef<Vault | null>(null);
-  const saveSeq = useRef(0);
+  const baseRef = useRef(vault);
+  const identityRef = useRef<Identity>({ id: null, generation: 0 });
+  const saveSeqRef = useRef(0);
+  const lastSaveSeqRef = useRef(new Map<string, number>());
   const bootedRef = useRef(false);
-  const loadFailures = useRef(0);
+  const loadFailuresRef = useRef(0);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSaveRef = useRef<Promise<boolean> | null>(null);
+  const switchRef = useRef<{ promise: Promise<void> } | null>(null);
+  const queuedSwitchRef = useRef<string | null>(null);
+  const creatingRef = useRef(false);
+
   const searchInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /** The undo slot of the vault that is on the screen. */
+  const undoKey = vaultId ?? '';
+  const undo = undoSlots[undoKey] ?? null;
 
   /** Applies the next vault to the state and to the ref the handlers read. */
   const applyVault = useCallback((next: Vault) => {
@@ -77,63 +124,173 @@ export default function App() {
     setVault(next);
   }, []);
 
-  // Load once. A genuinely empty storage is seeded; a failing storage leaves
-  // the session in memory only so no work is lost and nothing is overwritten.
-  useEffect(() => {
-    if (bootedRef.current) return;
-    bootedRef.current = true;
+  /** True when the tab holds notes that are not in the storage. */
+  const hasUnsavedWork = useCallback(() => baseRef.current !== vaultRef.current, []);
 
-    void (async () => {
-      try {
-        const stored = await loadVault();
-        if (stored === null) {
-          const seeded = createSeedVault();
-          applyVault(seeded);
-          setMode('ready');
-          setStatus('Local vault created');
-          return;
+  /** True while the identity of the vault is still the one that was taken. */
+  const isCurrent = useCallback((identity: Identity) => {
+    const current = identityRef.current;
+    return current.id === identity.id && current.generation === identity.generation;
+  }, []);
+
+  /**
+   * Puts a vault on the screen.
+   *
+   * The generation changes with every new vault, so a write that was started
+   * for the previous vault can no longer mark this one as saved.
+   */
+  const commitVault = useCallback((nextCatalog: VaultCatalog, next: Vault, id: string) => {
+    identityRef.current = { id, generation: identityRef.current.generation + 1 };
+    vaultRef.current = next;
+    baseRef.current = next;
+    setVault(next);
+    setVaultId(id);
+    setCatalog(nextCatalog);
+    setStorageMode('ready');
+    setError(null);
+  }, []);
+
+  /**
+   * Writes a vault to the storage.
+   *
+   * The write carries the identity of the vault it belongs to. A write that
+   * finishes after the vault changed is dropped: it must not mark another
+   * vault as saved and it must not claim that the notes on the screen are
+   * stored.
+   */
+  const save = useCallback(
+    async (next: Vault, target: string, identity: Identity): Promise<boolean> => {
+      const seq = (saveSeqRef.current += 1);
+      lastSaveSeqRef.current.set(target, seq);
+      const write = (async () => {
+        try {
+          await saveVault(next, target);
+        } catch {
+          if (isCurrent(identity)) {
+            setError('Local storage rejected the save. Your notes are still here in this tab.');
+            setRetryKind('save');
+          }
+          return false;
         }
-        applyVault(stored);
-        baseRef.current = stored;
-        setMode('ready');
-        setStatus('Local vault restored');
-      } catch {
-        baseRef.current = vaultRef.current;
-        loadFailures.current += 1;
-        setMode('memory-only');
-        setRetryKind('load');
-        setError('Local storage could not be read, so this session runs in memory only. Notes are not saved yet.');
+        // A newer write to the same slot wins, and a write of a vault that
+        // is not on the screen any more is dropped.
+        if (lastSaveSeqRef.current.get(target) !== seq) return true;
+        if (!isCurrent(identity)) return true;
+        baseRef.current = next;
+        setError(null);
+        setStorageMode('ready');
+        setStatus('Saved to local storage');
+        return true;
+      })();
+      pendingSaveRef.current = write;
+      try {
+        return await write;
+      } finally {
+        if (pendingSaveRef.current === write) pendingSaveRef.current = null;
       }
-    })();
-  }, []);
+    },
+    [isCurrent],
+  );
 
-  const save = useCallback(async (next: Vault): Promise<boolean> => {
-    const seq = ++saveSeq.current;
-    try {
-      await saveVault(next);
-      if (seq !== saveSeq.current) return true;
-      baseRef.current = next;
-      setError(null);
-      setMode('ready');
-      setStatus('Saved to local storage');
-      return true;
-    } catch {
-      if (seq !== saveSeq.current) return false;
-      setError('Local storage rejected the save. Your notes are still here in this tab.');
-      setRetryKind('save');
-      return false;
+  /**
+   * Writes the pending changes of the open vault before it is left.
+   *
+   * A write that is already running is waited for, so two writes never
+   * overlap, and the debounce is dropped, so the draft is written once.
+   */
+  const flushPendingSave = useCallback(async (): Promise<boolean> => {
+    const running = pendingSaveRef.current;
+    if (running) {
+      const ok = await running;
+      if (!ok) return false;
     }
-  }, []);
+    if (saveTimerRef.current !== null) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const identity = identityRef.current;
+    if (identity.id === null) return true;
+    if (baseRef.current === vaultRef.current) return true;
+    return save(vaultRef.current, identity.id, identity);
+  }, [save]);
 
   // Edits are applied immediately in memory and written after a short pause.
   useEffect(() => {
-    if (mode !== 'ready') return;
+    if (storageMode !== 'ready') return;
+    const identity = identityRef.current;
+    const id = identity.id;
+    if (id === null) return;
     if (baseRef.current === vault) return;
     const timer = setTimeout(() => {
-      void save(vault);
+      void save(vault, id, identity);
     }, SAVE_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [mode, save, vault]);
+    saveTimerRef.current = timer;
+    return () => {
+      clearTimeout(timer);
+      if (saveTimerRef.current === timer) saveTimerRef.current = null;
+    };
+  }, [save, storageMode, vault]);
+
+  /**
+   * Reads the storage and opens the vault that is selected there.
+   *
+   * The catalog decides whether this is a first use, a user whose notes are
+   * stored or a storage that cannot be read. A first use shows the
+   * onboarding, a stored vault is opened, and a broken storage leaves the
+   * session in memory with a warning instead of pretending it is fresh.
+   */
+  const boot = useCallback(async () => {
+    try {
+      const stored = await loadCatalog();
+      if (stored === null) {
+        // Nothing is stored at all, so this is a genuine first use.
+        if (hasUnsavedWork()) {
+          setRetryKind('save');
+          setError(
+            'Local storage is readable but empty. Retry saves the notes of this tab to local storage.',
+          );
+          return;
+        }
+        setPhase('onboarding');
+        return;
+      }
+
+      const opened = await openStoredVault(stored.activeVaultId);
+      if (hasUnsavedWork()) {
+        // The tab holds notes that are not in the storage, so they are not
+        // thrown away for the stored ones.
+        setRetryKind('save');
+        setError(
+          'Local storage is readable again. Export the notes of this tab, then reload the page to use the stored vault.',
+        );
+        return;
+      }
+      commitVault(opened.catalog, opened.vault, opened.catalog.activeVaultId);
+      setPhase('workspace');
+      setStatus('Local vault restored');
+    } catch {
+      loadFailuresRef.current += 1;
+      setStorageMode('memory-only');
+      setPhase('workspace');
+      if (loadFailuresRef.current >= 2) {
+        setRetryKind('save');
+        setError(
+          'Local storage still cannot be read. Retry replaces the unreadable vault with the notes of this tab.',
+        );
+        return;
+      }
+      setRetryKind('load');
+      setError(
+        'Local storage could not be read, so this session runs in memory only. Your notes are not saved yet.',
+      );
+    }
+  }, [commitVault, hasUnsavedWork]);
+
+  useEffect(() => {
+    if (bootedRef.current) return;
+    bootedRef.current = true;
+    void boot();
+  }, [boot]);
 
   const handleCreate = useCallback(() => {
     const current = vaultRef.current;
@@ -200,32 +357,44 @@ export default function App() {
     setStatus(`Renamed to ${note.name}`);
   }, [applyVault]);
 
-  const handleDelete = useCallback((id: string) => {
-    const current = vaultRef.current;
-    const { vault: next, note } = deleteNote(current, id);
-    if (!note || next === current) return;
-    applyVault(next);
-    // The deleted row disappears with the focus on it, so the keyboard is
-    // handed to the note the vault selected, or to the empty state when the
-    // last note is gone.
-    setFocusNote(
-      next.activeNoteId ? { kind: 'note', id: next.activeNoteId } : { kind: 'empty' },
-    );
-    setUndo({ id: note.id, name: note.name });
-    setStatus(`Deleted ${note.name}`);
-  }, [applyVault]);
+  const handleDelete = useCallback(
+    (id: string) => {
+      const current = vaultRef.current;
+      const { vault: next, note } = deleteNote(current, id);
+      if (!note || next === current) return;
+      applyVault(next);
+      // The deleted row disappears with the focus on it, so the keyboard is
+      // handed to the note the vault selected, or to the empty state when the
+      // last note is gone.
+      setFocusNote(
+        next.activeNoteId ? { kind: 'note', id: next.activeNoteId } : { kind: 'empty' },
+      );
+      // The undo slot belongs to the vault the note was deleted in.
+      setUndoSlots((slots) => ({ ...slots, [undoKey]: { id: note.id, name: note.name } }));
+      setStatus(`Deleted ${note.name}`);
+    },
+    [applyVault, undoKey],
+  );
 
-  const handleRestore = useCallback((id: string): boolean => {
-    const { vault: next, note } = restoreNote(vaultRef.current, id);
-    if (!note) return false;
-    applyVault({ ...next, activeNoteId: note.id });
-    setFocusNote({ kind: 'note', id: note.id });
-    // The undo slot holds the restored note, so the undo control would do
-    // nothing. It goes when the note comes back.
-    setUndo((current) => (current?.id === note.id ? null : current));
-    setStatus(`Restored ${note.name}`);
-    return true;
-  }, [applyVault]);
+  const handleRestore = useCallback(
+    (id: string): boolean => {
+      const { vault: next, note } = restoreNote(vaultRef.current, id);
+      if (!note) return false;
+      applyVault({ ...next, activeNoteId: note.id });
+      setFocusNote({ kind: 'note', id: note.id });
+      // The undo slot holds the restored note, so the undo control would do
+      // nothing. It goes when the note comes back.
+      setUndoSlots((slots) => {
+        if (slots[undoKey]?.id !== note.id) return slots;
+        const next = { ...slots };
+        delete next[undoKey];
+        return next;
+      });
+      setStatus(`Restored ${note.name}`);
+      return true;
+    },
+    [applyVault, undoKey],
+  );
 
   const handleUndo = useCallback(() => {
     if (!undo) return;
@@ -240,10 +409,12 @@ export default function App() {
   /**
    * Reads the selected files and merges them into the vault.
    *
-   * The files are read first and merged afterwards, so a note that was
-   * written while a file was being read is still there afterwards. The
-   * limits are checked on the file size before the content is read, so an
-   * oversized file is never pulled into memory.
+   * The identity of the vault is taken before the files are read, so a file
+   * that is read while another vault takes the screen is never merged into
+   * that vault. The files are read one after the other, so a large selection
+   * does not hold the text of every file in memory at once. The limits are
+   * checked on the file size before the content is read, so an oversized
+   * file is never pulled into memory.
    */
   const handleImportFiles = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
@@ -252,6 +423,8 @@ export default function App() {
       input.value = '';
       setImportError(null);
       if (files.length === 0) return;
+
+      const identity = identityRef.current;
 
       const skipped: ImportSkip[] = [];
       const envelopes: File[] = [];
@@ -285,8 +458,6 @@ export default function App() {
       let imported = 0;
 
       try {
-        // The files are read one after the other, so a large selection does
-        // not hold the text of every file in memory at once.
         const notes: { name: string; text: string }[] = [];
         for (const file of markdown) {
           notes.push({ name: stripExtension(file.name), text: await file.text() });
@@ -294,6 +465,14 @@ export default function App() {
         const envelopesText: string[] = [];
         for (const file of envelopes) {
           envelopesText.push(await file.text());
+        }
+
+        // The vault that is on the screen is not the one the files were
+        // chosen for any more, so the files are refused.
+        if (!isCurrent(identity)) {
+          setImportError('The vault switched during the import, so the files were not imported.');
+          setStatus('The import was refused');
+          return;
         }
 
         // The merge runs against the vault of this moment, not against a vault
@@ -322,9 +501,9 @@ export default function App() {
       const summary = describeImport(imported, skipped);
       // Without storage the notes only live in this tab, so the summary says
       // so instead of only counting the import.
-      setStatus(mode === 'ready' ? summary : `${summary} (not saved — use Export)`);
+      setStatus(storageMode === 'ready' ? summary : `${summary} (not saved — use Export)`);
     },
-    [applyVault, mode],
+    [applyVault, isCurrent, storageMode],
   );
 
   /** Writes the vault of this tab to a JSON file. The storage is not read. */
@@ -384,22 +563,180 @@ export default function App() {
     setSearchRequest((request) => request + 1);
   }, []);
 
+  /**
+   * Opens another vault.
+   *
+   * The pending changes of the open vault are written first, so nothing is
+   * lost. A read of the target that fails leaves the open vault, its draft
+   * and the selection of the catalog as they were.
+   */
+  const performSwitch = useCallback(
+    async (id: string): Promise<boolean> => {
+      if (id === identityRef.current.id) return true;
+
+      const flushed = await flushPendingSave();
+      if (!flushed) {
+        setError(
+          'The notes of this vault could not be saved, so the vault was not changed. Export the notes of this tab before you leave.',
+        );
+        setStatus('The vault was not changed');
+        return false;
+      }
+
+      let opened: { catalog: VaultCatalog; vault: Vault };
+      try {
+        opened = await openStoredVault(id);
+      } catch (error) {
+        setError(
+          `The vault could not be opened: ${errorMessage(error)}. The open vault and your draft are unchanged.`,
+        );
+        setStatus('The vault was not changed');
+        return false;
+      }
+
+      commitVault(opened.catalog, opened.vault, opened.catalog.activeVaultId);
+      setStatus(`Opened ${vaultName(opened.catalog, opened.catalog.activeVaultId)}`);
+      return true;
+    },
+    [commitVault, flushPendingSave],
+  );
+
+  /**
+   * Asks for another vault.
+   *
+   * A request that arrives while a switch is running waits for it and
+   * replaces it with the latest target, so two switches never overlap.
+   */
+  const switchVault = useCallback(
+    (id: string): Promise<void> => {
+      const running = switchRef.current;
+      if (running) {
+        queuedSwitchRef.current = id;
+        return running.promise;
+      }
+      const promise = (async () => {
+        try {
+          for (;;) {
+            const target = queuedSwitchRef.current ?? id;
+            queuedSwitchRef.current = null;
+            const ok = await performSwitch(target);
+            if (!ok) break;
+            const next = queuedSwitchRef.current;
+            // A queued request for the target that just opened is satisfied;
+            // leaving it set would make the next request silently re-run it.
+            if (next === null || next === target) {
+              queuedSwitchRef.current = null;
+              break;
+            }
+          }
+        } finally {
+          switchRef.current = null;
+        }
+      })();
+      switchRef.current = { promise };
+      return promise;
+    },
+    [performSwitch],
+  );
+
+  /**
+   * Creates a vault and opens it.
+   *
+   * The pending changes of the open vault are written first, so nothing is
+   * lost when the new vault takes the screen. A second request while a
+   * vault is created is refused, so a double submit cannot create two
+   * vaults.
+   */
+  const createVault = useCallback(
+    async (name: string, next: Vault): Promise<void> => {
+      if (creatingRef.current) throw new Error('a vault is already being created');
+      creatingRef.current = true;
+      try {
+        // A creation that lands in the middle of a switch would leave the
+        // screen and the stored selection disagreeing, so let the switch end.
+        await switchRef.current?.promise;
+        const flushed = await flushPendingSave();
+        if (!flushed) {
+          throw new Error('the notes of this vault could not be saved');
+        }
+        const created = await createStoredVault(name, next);
+        commitVault(created.catalog, created.vault, created.catalog.activeVaultId);
+        setStatus(
+          `Created the vault ${vaultName(created.catalog, created.catalog.activeVaultId)}`,
+        );
+      } finally {
+        creatingRef.current = false;
+      }
+    },
+    [commitVault, flushPendingSave],
+  );
+
+  /** The first vault of a first use. */
+  const handleOnboardingCreate = useCallback(
+    async (name: string, next: Vault) => {
+      await createVault(name, next);
+      setPhase('workspace');
+      setFocusContentRequest((request) => request + 1);
+    },
+    [createVault],
+  );
+
+  const handleRenameVault = useCallback(async (id: string, name: string) => {
+    try {
+      const next = await renameStoredVault(id, name);
+      setCatalog(next);
+      setStatus(`Renamed the vault to ${name}`);
+    } catch (error) {
+      setError(`The vault could not be renamed: ${errorMessage(error)}`);
+    }
+  }, []);
+
+  const handleArchiveVault = useCallback(async (id: string) => {
+    try {
+      const next = await archiveStoredVault(id);
+      setCatalog(next);
+      setStatus('The vault was archived. Restore it to open it again.');
+    } catch (error) {
+      setError(`The vault could not be archived: ${errorMessage(error)}`);
+    }
+  }, []);
+
+  const handleRestoreVault = useCallback(async (id: string) => {
+    try {
+      const next = await restoreStoredVault(id);
+      setCatalog(next);
+      setStatus('The vault was restored.');
+    } catch (error) {
+      setError(`The vault could not be restored: ${errorMessage(error)}`);
+    }
+  }, []);
+
+  const handleCreateVault = useCallback(
+    async (name: string) => {
+      try {
+        await createVault(name, createEmptyVault());
+        setManagerOpen(false);
+      } catch (error) {
+        setError(`The vault could not be created: ${errorMessage(error)}`);
+      }
+    },
+    [createVault],
+  );
+
   const handleRetry = useCallback(async () => {
     if (retryKind === 'save') {
-      if (mode === 'memory-only') {
+      if (storageMode === 'memory-only') {
         // The recovery save may destroy the stored vault, so the store is
         // read again first and the write only happens when it is the only
         // way out.
         try {
-          const stored = await loadVault();
+          const stored = await loadVault(LEGACY_VAULT_ID);
           if (stored !== null) {
             if (baseRef.current === vaultRef.current) {
               // The tab changed nothing, so the stored vault is the truth.
-              applyVault(stored);
-              baseRef.current = stored;
-              setMode('ready');
-              setError(null);
-              setStatus('Local vault restored');
+              // Boot again so the vault also gets its identity and catalog
+              // back; without them later edits would never be written.
+              await boot();
             } else {
               setError(
                 'Local storage is readable again. Export the notes of this tab, then reload the page to use the stored vault.',
@@ -418,43 +755,38 @@ export default function App() {
           return;
         }
       }
-      await save(vaultRef.current);
+      const identity = identityRef.current;
+      const saved = await save(vaultRef.current, identity.id ?? LEGACY_VAULT_ID, identity);
+      if (saved && identity.id === null) {
+        // The notes are stored again, so the vault needs an identity before
+        // the next keystroke can be written. The catalog stays as it is: a
+        // broken catalog must not take the storage away again.
+        identityRef.current = { id: LEGACY_VAULT_ID, generation: identityRef.current.generation + 1 };
+        setVaultId(LEGACY_VAULT_ID);
+      }
       return;
     }
 
-    try {
-      const stored = await loadVault();
-      if (stored === null) {
-        setRetryKind('save');
-        setError('Local storage is readable but empty. Retry saves the notes of this tab to local storage.');
-        return;
+    await boot();
+  }, [boot, retryKind, save, storageMode]);
+
+  /**
+   * Reads the catalog again when the manager opens.
+   *
+   * The manager has to show the vaults that are really in the storage, so a
+   * vault that was created in another tab is there too.
+   */
+  useEffect(() => {
+    if (!managerOpen) return;
+    void (async () => {
+      try {
+        const fresh = await loadCatalog();
+        if (fresh) setCatalog(fresh);
+      } catch {
+        // The manager keeps the catalog it has.
       }
-      if (baseRef.current !== vaultRef.current) {
-        setRetryKind('save');
-        // The next retry re-reads the store and refuses to write over a
-        // vault that is readable, so the message must not promise a save.
-        setError(
-          'Local storage is readable again. Export the notes of this tab, then reload the page to use the stored vault.',
-        );
-        return;
-      }
-      applyVault(stored);
-      baseRef.current = stored;
-      setMode('ready');
-      setError(null);
-      setStatus('Local vault restored');
-    } catch {
-      loadFailures.current += 1;
-      if (loadFailures.current >= 2) {
-        // The stored document stays unreadable, so retrying the read can only
-        // loop. Offer the way out: write this tab's notes over it.
-        setRetryKind('save');
-        setError('Local storage still cannot be read. Retry replaces the unreadable vault with the notes of this tab.');
-        return;
-      }
-      setError('Local storage could not be read, so this session runs in memory only. Notes are not saved yet.');
-    }
-  }, [applyVault, mode, retryKind, save]);
+    })();
+  }, [managerOpen]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -505,12 +837,16 @@ export default function App() {
     [vault],
   );
 
-  if (mode === 'loading') {
+  if (phase === 'loading') {
     return (
       <main className="workspace-loading" aria-label="Opening the local vault">
         <p className="workspace-loading__text">Opening local vault…</p>
       </main>
     );
+  }
+
+  if (phase === 'onboarding') {
+    return <Onboarding onCreate={handleOnboardingCreate} />;
   }
 
   return (
@@ -525,11 +861,14 @@ export default function App() {
         graph={graph}
         noteNames={noteNames}
         graphPending={graphPending}
+        vaultName={catalog && vaultId ? vaultName(catalog, vaultId) : null}
         searchInputRef={searchInputRef}
         editorRef={editorRef}
         previewRef={previewRef}
         searchRequest={searchRequest}
+        focusContentRequest={focusContentRequest}
         focusContent={focusContent}
+        onOpenVaults={() => setManagerOpen(true)}
         onOpenPalette={openPalette}
         onRetry={() => {
           void handleRetry();
@@ -559,8 +898,36 @@ export default function App() {
         onFocusSearch={requestSearch}
         onAnnounce={announce}
       />
+      {catalog && vaultId ? (
+        <VaultManager
+          open={managerOpen}
+          catalog={catalog}
+          activeVaultId={vaultId}
+          onClose={() => setManagerOpen(false)}
+          onOpen={(id) => {
+            void switchVault(id);
+          }}
+          onRename={(id, name) => {
+            void handleRenameVault(id, name);
+          }}
+          onArchive={(id) => {
+            void handleArchiveVault(id);
+          }}
+          onRestore={(id) => {
+            void handleRestoreVault(id);
+          }}
+          onCreate={(name) => {
+            void handleCreateVault(name);
+          }}
+        />
+      ) : null}
     </>
   );
+}
+
+/** The name of a vault in the catalog. */
+function vaultName(catalog: VaultCatalog, id: string): string {
+  return catalog.vaults.find((member) => member.id === id)?.name ?? 'this vault';
 }
 
 /**
@@ -602,5 +969,5 @@ function describeImport(imported: number, skipped: ImportSkip[]): string {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'the file could not be read.';
+  return error instanceof Error ? error.message : 'the storage could not be read.';
 }
