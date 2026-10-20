@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import App from './App';
+import { formatLocalDate } from './domain/dailyNotes';
 import { MAX_ENVELOPE_NOTES } from './domain/transfer';
 import { createEmptyVault, createNote, deleteNote } from './domain/vault';
 import type { Vault } from './domain/types';
@@ -1474,6 +1475,37 @@ describe('unreadable storage', () => {
     expect(stored.vault.notes[0]?.body).toBe('edited after recovery');
   });
 
+  it('replaces the unreadable stored vault with the notes of this tab', async () => {
+    const { vault } = createNote(createEmptyVault(), 'Stored note');
+    const created = await createStoredVault('Work', vault);
+    const id = created.catalog.activeVaultId;
+    // The catalog stays valid, but the document of the active vault is
+    // unreadable.
+    await writeRaw(`vault:${id}`, { version: 2, vault });
+
+    await renderApp();
+    await click(buttonByName('Create first note'));
+    await click(buttonByName('Retry'));
+    await waitFor(() => alertText().includes('replaces the unreadable vault'));
+    await click(buttonByName('Retry'));
+
+    await waitFor(async () => {
+      try {
+        return (await loadVault(id))?.notes.some((note) => note.name === 'Untitled') ?? false;
+      } catch {
+        // The document is still the unreadable one until the recovery lands.
+        return false;
+      }
+    });
+    // The notes are in the vault the user is in, and the legacy key stays
+    // untouched.
+    expect(await loadVault('current')).toBeNull();
+    expect((await loadCatalog())?.activeVaultId).toBe(id);
+    // The name of the vault and the manager are back without a reload.
+    await waitFor(() => container.querySelector('.workspace__vault-label') !== null);
+    expect(container.querySelector('.workspace__vault-label')?.textContent).toBe('Work');
+  });
+
   it('keeps saving after a retry replaces the unreadable vault', async () => {
     await storeUnreadableDocument();
 
@@ -2602,6 +2634,25 @@ describe('quick switcher', () => {
     expect(noteNames()).toHaveLength(before);
   });
 
+  it('does nothing while the vault manager is open', async () => {
+    await renderLegacyApp();
+    const before = noteNames().length;
+
+    await openVaultManager();
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(switcherDialog().hasAttribute('open')).toBe(false);
+    expect(container.querySelector('dialog.vaults')?.hasAttribute('open')).toBe(true);
+    expect(noteNames()).toHaveLength(before);
+  });
+
   it('keeps one polite live region while it is open', async () => {
     await renderLegacyApp();
 
@@ -2682,6 +2733,11 @@ describe('note tabs', () => {
     await waitFor(async () => {
       const stored = await loadVault();
       return stored?.activeNoteId === null;
+    });
+    // The stored session is empty as well, so the reload has nothing to open.
+    await waitFor(async () => {
+      const session = await loadVaultSession('current');
+      return session !== null && session.openNoteIds.length === 0;
     });
 
     await remountApp();
@@ -2820,5 +2876,107 @@ describe('note tabs', () => {
 
     await waitFor(() => tabLabels().length > 0);
     expect(tabLabels()).toEqual(['Alpha']);
+  });
+});
+
+describe('the daily notes and the calendar', () => {
+  it('opens the daily note of today from the toolbar', async () => {
+    await renderLegacyApp();
+    const today = formatLocalDate(new Date());
+
+    await click(buttonByName("Open today's daily note"));
+
+    await waitFor(() => noteTitle() === today);
+    expect(editorTextarea().value).toBe(`# ${today}\n\n`);
+    expect(tabLabels().filter((label) => label === today)).toHaveLength(1);
+    expect(noteNames().filter((name) => name === today)).toHaveLength(1);
+  });
+
+  it('opens the daily note of today from the command catalog', async () => {
+    await renderLegacyApp();
+    const today = formatLocalDate(new Date());
+
+    await runCommand("Open today's daily note");
+
+    await waitFor(() => noteTitle() === today);
+    expect(editorTextarea().value).toBe(`# ${today}\n\n`);
+  });
+
+  it('opens the daily note of today only once', async () => {
+    await renderLegacyApp();
+    const today = formatLocalDate(new Date());
+
+    await click(buttonByName("Open today's daily note"));
+    await waitFor(() => noteTitle() === today);
+    const tabs = tabLabels().length;
+    const notes = noteNames().length;
+
+    await click(buttonByName("Open today's daily note"));
+
+    expect(tabLabels()).toHaveLength(tabs);
+    expect(noteNames()).toHaveLength(notes);
+    expect(tabLabels().filter((label) => label === today)).toHaveLength(1);
+    expect(noteNames().filter((name) => name === today)).toHaveLength(1);
+    expect(editorTextarea().value).toBe(`# ${today}\n\n`);
+  });
+
+  it('keeps the daily note of today over a reload', async () => {
+    await renderLegacyApp();
+    const today = formatLocalDate(new Date());
+
+    await click(buttonByName("Open today's daily note"));
+    await waitFor(() => noteTitle() === today);
+    await waitFor(async () => {
+      const stored = await loadVault('current');
+      return stored?.notes.some((note) => note.name === today) ?? false;
+    });
+
+    await remountApp();
+
+    await waitFor(() => noteTitle() === today);
+    expect(editorTextarea().value).toBe(`# ${today}\n\n`);
+  });
+
+  it('announces the date of the daily note in the polite region', async () => {
+    await renderLegacyApp();
+    const today = formatLocalDate(new Date());
+
+    await click(buttonByName("Open today's daily note"));
+
+    await waitFor(() => statusText().includes(today));
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
+  });
+
+  it('opens the calendar from the toolbar', async () => {
+    await renderLegacyApp();
+
+    await click(buttonByName('Open the calendar'));
+
+    await waitFor(() => container.querySelector('dialog.calendar')?.hasAttribute('open') === true);
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
+  });
+
+  it('opens the note of a day from the calendar', async () => {
+    await renderLegacyApp();
+    await click(buttonByName('Open the calendar'));
+    await waitFor(() => container.querySelector('dialog.calendar')?.hasAttribute('open') === true);
+    const today = formatLocalDate(new Date());
+
+    const day = container.querySelector<HTMLButtonElement>(`.calendar__day[data-day="${today}"]`);
+    if (!day) throw new Error('no day in the calendar');
+    await click(day);
+
+    await waitFor(() => noteTitle() === today);
+    expect(editorTextarea().value).toBe(`# ${today}\n\n`);
+    expect(tabLabels().filter((label) => label === today)).toHaveLength(1);
+    expect(noteNames().filter((name) => name === today)).toHaveLength(1);
+  });
+
+  it('opens the calendar from the command catalog', async () => {
+    await renderLegacyApp();
+
+    await runCommand('Open the calendar');
+
+    await waitFor(() => container.querySelector('dialog.calendar')?.hasAttribute('open') === true);
   });
 });

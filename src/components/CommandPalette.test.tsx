@@ -50,6 +50,8 @@ function commands(): CommandAction[] {
       closeTab: () => RUN.push('closeTab'),
       nextTab: () => RUN.push('nextTab'),
       previousTab: () => RUN.push('previousTab'),
+      openDailyNote: () => RUN.push('openDailyNote'),
+      openCalendar: () => RUN.push('openCalendar'),
     },
   );
 }

@@ -72,6 +72,10 @@ export interface WorkspaceProps {
   onCompactChange?: (compact: boolean) => void;
   onOpenVaults(): void;
   onOpenPalette(): void;
+  /** Opens the calendar of the daily notes. */
+  onOpenCalendar(): void;
+  /** Opens the note of today. */
+  onOpenDailyNote(): void;
   onRetry(): void;
   onDismissImport(): void;
   onSelect(id: string): void;
@@ -341,6 +345,23 @@ export default function Workspace(props: WorkspaceProps) {
             ) : null}
             <button type="button" className="workspace__new" onClick={props.onCreate}>
               New note
+            </button>
+            <button
+              type="button"
+              className="workspace__daily"
+              aria-label="Open today's daily note"
+              onClick={props.onOpenDailyNote}
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              className="workspace__calendar"
+              aria-haspopup="dialog"
+              aria-label="Open the calendar"
+              onClick={props.onOpenCalendar}
+            >
+              Calendar
             </button>
             <button
               type="button"

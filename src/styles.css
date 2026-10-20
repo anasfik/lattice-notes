@@ -124,6 +124,19 @@ a {
   outline-offset: 2px;
 }
 
+/* A text that is read out loud but not seen. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 ::selection {
   background: var(--color-accent);
   color: var(--color-accent-ink);
@@ -258,6 +271,8 @@ a {
 .workspace__new,
 .workspace__command,
 .workspace__vault,
+.workspace__daily,
+.workspace__calendar,
 .workspace__file-action {
   font: inherit;
   font-size: var(--text-sm);
@@ -301,6 +316,19 @@ a {
   color: var(--color-ink);
   background: var(--color-surface-raised);
   border: var(--border-width) solid var(--color-border-strong);
+}
+
+/* The daily note and the calendar of the toolbar. */
+.workspace__daily,
+.workspace__calendar {
+  color: var(--color-ink);
+  background: var(--color-surface-raised);
+  border: var(--border-width) solid var(--color-border-strong);
+}
+
+.workspace__daily:hover,
+.workspace__calendar:hover {
+  border-color: var(--color-ink-faint);
 }
 
 /* The name of the open vault opens the manager of the vaults. */
@@ -1831,6 +1859,172 @@ a {
   cursor: pointer;
 }
 
+/* Calendar ----------------------------------------------------------------- */
+
+.calendar {
+  width: min(24rem, calc(100vw - 1rem));
+  max-width: calc(100vw - 1rem);
+  padding: 0;
+  color: var(--color-ink);
+  background: var(--color-surface-raised);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.calendar::backdrop {
+  background: rgb(0 0 0 / 0.5);
+}
+
+.calendar__panel {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.calendar__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.calendar__month {
+  font-size: var(--text-md);
+  font-weight: 600;
+  text-align: center;
+}
+
+.calendar__nav {
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
+  font-size: var(--text-lg);
+  line-height: 1;
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.calendar__nav:hover {
+  border-color: var(--color-ink-faint);
+}
+
+.calendar__jump {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.calendar__jump-label {
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+}
+
+.calendar__jump-input {
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  background: var(--color-surface-sunken);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  min-height: var(--touch-target);
+}
+
+/* The grid scrolls inside itself, so the days keep their 44 pixel targets
+   and the page never gets wider than the screen. */
+.calendar__grid-wrap {
+  overflow-x: auto;
+}
+
+.calendar__grid {
+  width: 100%;
+  min-width: 21rem;
+  border-collapse: collapse;
+}
+
+.calendar__weekday {
+  padding: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+  text-align: center;
+}
+
+.calendar__cell {
+  padding: 0;
+}
+
+.calendar__day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  background: none;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.calendar__day:hover {
+  background: var(--color-surface);
+}
+
+/* The day of today. */
+.calendar__day[aria-current='date'] {
+  font-weight: 600;
+  color: var(--color-accent-ink);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.calendar__day-number {
+  line-height: 1;
+}
+
+/* The dot of a day that has a note. */
+.calendar__dot {
+  font-size: var(--text-xs);
+  line-height: 1;
+  color: var(--color-accent);
+}
+
+.calendar__day[aria-current='date'] .calendar__dot {
+  color: var(--color-accent-ink);
+}
+
+.calendar__legend {
+  font-size: var(--text-2xs);
+  color: var(--color-ink-faint);
+}
+
+.calendar__foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.calendar__today {
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  min-height: var(--touch-target);
+  cursor: pointer;
+}
+
 /* Compact layout ---------------------------------------------------------- */
 
 @media (max-width: 48rem) {
@@ -1862,6 +2056,8 @@ a {
   /* The toolbar keeps the name and the actions on one line. */
   .workspace__new,
   .workspace__command,
+  .workspace__daily,
+  .workspace__calendar,
   .workspace__files-summary {
     font-size: var(--text-xs);
     padding: var(--space-2);

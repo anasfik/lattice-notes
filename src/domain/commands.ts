@@ -53,6 +53,10 @@ export interface CommandHandlers {
   closeTab(): void;
   nextTab(): void;
   previousTab(): void;
+  /** Opens the note of today. */
+  openDailyNote(): void;
+  /** Opens the calendar of the daily notes. */
+  openCalendar(): void;
 }
 
 /**
@@ -96,6 +100,12 @@ export function buildCommands(
       run: handlers.undo,
     },
     {
+      id: 'note.daily',
+      label: "Open today's daily note",
+      category: 'Note',
+      run: handlers.openDailyNote,
+    },
+    {
       id: 'note.switch',
       label: 'Quick switcher',
       category: 'Note',
@@ -137,6 +147,12 @@ export function buildCommands(
       label: 'Read mode',
       category: 'View',
       run: () => handlers.setViewMode('read'),
+    },
+    {
+      id: 'view.calendar',
+      label: 'Open the calendar',
+      category: 'View',
+      run: handlers.openCalendar,
     },
     {
       id: 'view.context',

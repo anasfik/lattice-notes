@@ -27,6 +27,7 @@ import {
 } from './domain/vault';
 import { buildCommands } from './domain/commands';
 import type { CommandAction, ViewMode } from './domain/commands';
+import { formatLocalDate, openDailyNote } from './domain/dailyNotes';
 import { closeTab, sanitizeTabIds, stepTab } from './domain/tabs';
 import {
   MAX_ENVELOPE_BYTES,
@@ -51,6 +52,7 @@ import {
 } from './storage/vaultRepository';
 import type { VaultCatalog, VaultTabSession } from './storage/vaultRepository';
 import CommandPalette from './components/CommandPalette';
+import Calendar from './components/Calendar';
 import Onboarding from './components/Onboarding';
 import QuickSwitcher from './components/QuickSwitcher';
 import VaultManager from './components/VaultManager';
@@ -98,6 +100,7 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [searchRequest, setSearchRequest] = useState(0);
   const [focusContentRequest, setFocusContentRequest] = useState(0);
@@ -128,6 +131,14 @@ export default function App() {
    */
   const sessionKnownRef = useRef(true);
   const identityRef = useRef<Identity>({ id: null, generation: 0 });
+  /**
+   * The vault the catalog points at.
+   *
+   * It is remembered as soon as the catalog was read, because the recovery
+   * needs the vault of the session even when opening it failed and the
+   * session never got an identity of its own.
+   */
+  const activeVaultIdRef = useRef<string | null>(null);
   const saveSeqRef = useRef(0);
   const lastSaveSeqRef = useRef(new Map<string, number>());
   const bootedRef = useRef(false);
@@ -154,6 +165,9 @@ export default function App() {
     () => sanitizeTabIds(openNoteIds, vault, vault.activeNoteId),
     [openNoteIds, vault],
   );
+
+  /** The notes of the vault that are not in the trash. */
+  const activeNoteList = useMemo(() => activeNotes(vault), [vault]);
 
   /** Applies the next vault to the state and to the ref the handlers read. */
   const applyVault = useCallback((next: Vault) => {
@@ -338,6 +352,11 @@ export default function App() {
         setPhase('onboarding');
         return;
       }
+
+      // The catalog was read, so the vault it points at is known even when
+      // opening it fails. The recovery replaces that vault, not the legacy
+      // one.
+      activeVaultIdRef.current = stored.activeVaultId;
 
       const opened = await openStoredVault(stored.activeVaultId);
       if (hasUnsavedWork()) {
@@ -729,6 +748,34 @@ export default function App() {
     setStatus(message);
   }, []);
 
+  /**
+   * Opens the note of a day.
+   *
+   * The note of a day is the one whose title is the date, so a day is never
+   * written twice. The note goes through the same path as every other note,
+   * so the tab, the selection and the save follow it.
+   */
+  const handleOpenDailyNote = useCallback(
+    (dateKey: string) => {
+      const { vault: next, note } = openDailyNote(vaultRef.current, dateKey);
+      applyVault(next);
+      rememberTab(note.id);
+      setStatus(`Opened the daily note for ${dateKey}`);
+      focusContent();
+    },
+    [applyVault, focusContent, rememberTab],
+  );
+
+  /** Opens the note of today, the day read from the local clock. */
+  const handleOpenTodaysNote = useCallback(() => {
+    handleOpenDailyNote(formatLocalDate(new Date()));
+  }, [handleOpenDailyNote]);
+
+  /** Opens the calendar of the daily notes. */
+  const handleOpenCalendar = useCallback(() => {
+    setCalendarOpen(true);
+  }, []);
+
   const openPalette = useCallback(() => {
     setPaletteOpen(true);
   }, []);
@@ -906,12 +953,17 @@ export default function App() {
 
   const handleRetry = useCallback(async () => {
     if (retryKind === 'save') {
+      // The recovery belongs to the vault the user is in: the identity while
+      // the session works on a vault, the vault of the catalog when the
+      // session never managed to open one, and the legacy vault only when
+      // there is nothing else.
+      const target = identityRef.current.id ?? activeVaultIdRef.current ?? LEGACY_VAULT_ID;
       if (storageMode === 'memory-only') {
         // The recovery save may destroy the stored vault, so the store is
         // read again first and the write only happens when it is the only
         // way out.
         try {
-          const stored = await loadVault(LEGACY_VAULT_ID);
+          const stored = await loadVault(target);
           if (stored !== null) {
             if (baseRef.current === vaultRef.current) {
               // The tab changed nothing, so the stored vault is the truth.
@@ -938,18 +990,22 @@ export default function App() {
       }
       const identity = identityRef.current;
       const session = sessionOf(openNoteIds, vaultRef.current);
-      const saved = await save(
-        vaultRef.current,
-        identity.id ?? LEGACY_VAULT_ID,
-        identity,
-        session,
-      );
+      const saved = await save(vaultRef.current, target, identity, session);
       if (saved && identity.id === null) {
         // The notes are stored again, so the vault needs an identity before
         // the next keystroke can be written. The catalog stays as it is: a
         // broken catalog must not take the storage away again.
-        identityRef.current = { id: LEGACY_VAULT_ID, generation: identityRef.current.generation + 1 };
-        setVaultId(LEGACY_VAULT_ID);
+        identityRef.current = { id: target, generation: identityRef.current.generation + 1 };
+        setVaultId(target);
+        // The catalog is read again, so the name of the vault and the manager
+        // are back instead of waiting for a reload.
+        try {
+          const fresh = await loadCatalog();
+          if (fresh) setCatalog(fresh);
+        } catch {
+          // The catalog is still unreadable, so the manager stays out of
+          // reach. The notes of this tab are stored all the same.
+        }
       }
       return;
     }
@@ -1018,6 +1074,8 @@ export default function App() {
           closeTab: closeActiveTab,
           nextTab: () => handleStepTab(1),
           previousTab: () => handleStepTab(-1),
+          openDailyNote: handleOpenTodaysNote,
+          openCalendar: handleOpenCalendar,
         },
       ),
     [
@@ -1026,6 +1084,8 @@ export default function App() {
       handleCreate,
       handleExport,
       handleImport,
+      handleOpenCalendar,
+      handleOpenTodaysNote,
       handleRenameActive,
       handleStepTab,
       handleTrashActive,
@@ -1043,7 +1103,7 @@ export default function App() {
 
   // A modal is open: a shortcut behind it would act on a note the user
   // cannot see.
-  const modalOpen = paletteOpen || switcherOpen || managerOpen;
+  const modalOpen = paletteOpen || switcherOpen || managerOpen || calendarOpen;
 
   // The palette, the quick switcher and the new note are reachable from
   // anywhere, including from the editor.
@@ -1128,6 +1188,8 @@ export default function App() {
         onCompactChange={setCompact}
         onOpenVaults={openVaultManager}
         onOpenPalette={openPalette}
+        onOpenCalendar={handleOpenCalendar}
+        onOpenDailyNote={handleOpenTodaysNote}
         onRetry={() => {
           void handleRetry();
         }}
@@ -1154,6 +1216,16 @@ export default function App() {
         commands={commands}
         onClose={() => setPaletteOpen(false)}
         onAnnounce={announce}
+      />
+      <Calendar
+        open={calendarOpen}
+        notes={activeNoteList}
+        onClose={() => setCalendarOpen(false)}
+        onOpenDate={(dateKey) => {
+          handleOpenDailyNote(dateKey);
+          setCalendarOpen(false);
+        }}
+        onFocusContent={focusContent}
       />
       <QuickSwitcher
         open={switcherOpen}

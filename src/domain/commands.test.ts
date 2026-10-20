@@ -32,6 +32,8 @@ function handlers(): CommandHandlers & { calls: string[] } {
     closeTab: () => calls.push('closeTab'),
     nextTab: () => calls.push('nextTab'),
     previousTab: () => calls.push('previousTab'),
+    openDailyNote: () => calls.push('openDailyNote'),
+    openCalendar: () => calls.push('openCalendar'),
   };
 }
 
@@ -49,6 +51,7 @@ describe('command catalog', () => {
     expect(catalog.map((entry) => entry.id).sort()).toEqual([
       'files.export',
       'files.import',
+      'note.daily',
       'note.new',
       'note.rename',
       'note.switch',
@@ -59,11 +62,22 @@ describe('command catalog', () => {
       'tab.next',
       'tab.previous',
       'vault.manager',
+      'view.calendar',
       'view.context',
       'view.read',
       'view.split',
       'view.write',
     ]);
+  });
+
+  it('keeps the daily note and the calendar available without a note', () => {
+    const catalog = buildCommands(
+      { ...available(), hasActiveNote: false, canUndo: false, openTabCount: 0 },
+      handlers(),
+    );
+
+    expect(command(catalog, 'note.daily').disabledReason).toBeUndefined();
+    expect(command(catalog, 'view.calendar').disabledReason).toBeUndefined();
   });
 
   it('gives every command a label and a category', () => {
