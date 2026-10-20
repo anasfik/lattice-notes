@@ -43,14 +43,19 @@ describe('note names', () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it('keeps deleted names reserved so restore stays unambiguous', () => {
+  it('reuses the name of a deleted note and suffixes it on restore', () => {
     const created = createNote(createEmptyVault(), 'Roadmap');
     const deleted = deleteNote(created.vault, created.note.id);
-    const next = createNote(deleted.vault, 'roadmap');
+    const next = createNote(deleted.vault, 'Roadmap');
 
-    expect(next.note.name).toBe('roadmap 2');
+    expect(next.note.name).toBe('Roadmap');
+
     const restored = restoreNote(next.vault, created.note.id);
-    expect(activeNotes(restored.vault)).toHaveLength(2);
+
+    expect(restored.note?.name).toBe('Roadmap 2');
+    const names = activeNotes(restored.vault).map((note) => note.name.toLowerCase());
+    expect(new Set(names).size).toBe(names.length);
+    expect(names.sort()).toEqual(['roadmap', 'roadmap 2']);
   });
 });
 
@@ -255,5 +260,19 @@ describe('buildLocalGraph', () => {
     expect(graph.nodes).toEqual([]);
     expect(graph.edges).toEqual([]);
     expect(graph.backlinks).toEqual([]);
+  });
+
+  it('resolves a link to the active note that holds the name', () => {
+    const linking = createNote(createEmptyVault(), 'Links', 'see [[Roadmap]]');
+    const roadmap = createNote(linking.vault, 'Roadmap');
+    const deleted = deleteNote(roadmap.vault, roadmap.note.id);
+    const recreated = createNote(deleted.vault, 'Roadmap');
+
+    expect(recreated.note.name).toBe('Roadmap');
+
+    const graph = buildLocalGraph(recreated.vault, recreated.note.id);
+
+    expect(graph.backlinks).toEqual([linking.note.id]);
+    expect(graph.edges).toContainEqual({ source: linking.note.id, target: recreated.note.id });
   });
 });

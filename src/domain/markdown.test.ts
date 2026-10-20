@@ -10,8 +10,19 @@ function inlineNodes(block: BlockNode | undefined): InlineNode[] {
   return [];
 }
 
+/** Flattens nested inline nodes so nested content is asserted too. */
+function collectInline(nodes: InlineNode[]): InlineNode[] {
+  const collected: InlineNode[] = [];
+  for (const node of nodes) {
+    collected.push(node);
+    const nested = (node as { inline?: InlineNode[] }).inline;
+    if (nested) collected.push(...collectInline(nested));
+  }
+  return collected;
+}
+
 function allInline(blocks: BlockNode[]): InlineNode[] {
-  return blocks.flatMap((block) => inlineNodes(block));
+  return blocks.flatMap((block) => collectInline(inlineNodes(block)));
 }
 
 describe('parseNote structure', () => {
@@ -63,6 +74,42 @@ describe('parseNote structure', () => {
     expect(parsed.links).toEqual([]);
     expect(parsed.tags).toEqual([]);
     expect(parsed.plainText).toBe('[not a link] and #not-a-tag');
+  });
+});
+
+describe('parseNote nested inline content', () => {
+  it('keeps wiki links and tags inside emphasis and strong', () => {
+    const parsed = parseNote('**See [[Roadmap]]** and **#urgent**');
+
+    expect(parsed.links).toEqual([{ target: 'Roadmap', alias: null, heading: null }]);
+    expect(parsed.tags).toEqual(['urgent']);
+    expect(parsed.plainText).toBe('See Roadmap and urgent');
+  });
+
+  it('keeps wiki links and tags inside plain emphasis', () => {
+    const parsed = parseNote('*See [[Roadmap]]* and *#urgent*');
+
+    expect(parsed.links).toEqual([{ target: 'Roadmap', alias: null, heading: null }]);
+    expect(parsed.tags).toEqual(['urgent']);
+    expect(parsed.plainText).toBe('See Roadmap and urgent');
+  });
+});
+
+describe('parseNote input ceiling', () => {
+  it('stops parsing a very long single line instead of freezing', () => {
+    const body = '['.repeat(100_000);
+    const started = Date.now();
+    const parsed = parseNote(body);
+    const elapsed = Date.now() - started;
+
+    expect(parsed.blocks).toHaveLength(1);
+    const block = parsed.blocks[0];
+    if (block?.kind !== 'paragraph') throw new Error('expected a paragraph block');
+    expect(block.inline).toHaveLength(1);
+    const first = block.inline[0];
+    if (first?.kind !== 'text') throw new Error('expected a single text node');
+    expect(first.text).toHaveLength(100_000);
+    expect(elapsed).toBeLessThan(2000);
   });
 });
 

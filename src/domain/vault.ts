@@ -54,13 +54,17 @@ export function activeNotes(vault: Vault): Note[] {
 }
 
 /**
- * A unique note name. Deleted notes keep their name reserved so that an
- * undo never resurrects a note that would collide with a newer one.
+ * A unique note name among the active notes. Deleted notes release their
+ * name so that a link to a trashed note resolves again as soon as a note with
+ * that name exists; restoring a trashed note suffixes it if the name was
+ * taken meanwhile.
  */
 export function uniqueNoteName(vault: Vault, desired: string, exceptId?: string): string {
   const base = normalizeNoteName(desired) || DEFAULT_NOTE_NAME;
   const taken = new Set(
-    vault.notes.filter((note) => note.id !== exceptId).map((note) => note.name.toLowerCase()),
+    vault.notes
+      .filter((note) => note.deletedAt === null && note.id !== exceptId)
+      .map((note) => note.name.toLowerCase()),
   );
   if (!taken.has(base.toLowerCase())) return base;
 
@@ -135,7 +139,12 @@ export function restoreNote(vault: Vault, id: string): { vault: Vault; note: Not
   const existing = vault.notes.find((note) => note.id === id);
   if (!existing || existing.deletedAt === null) return { vault, note: null };
 
-  const next = { ...existing, deletedAt: null, updatedAt: Date.now() };
+  const next = {
+    ...existing,
+    name: uniqueNoteName(vault, existing.name),
+    deletedAt: null,
+    updatedAt: Date.now(),
+  };
   return {
     vault: { ...vault, notes: vault.notes.map((note) => (note.id === id ? next : note)) },
     note: next,

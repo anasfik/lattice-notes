@@ -19,8 +19,8 @@ export interface HeadingInfo {
 
 export type InlineNode =
   | { kind: 'text'; text: string }
-  | { kind: 'emphasis'; text: string }
-  | { kind: 'strong'; text: string }
+  | { kind: 'emphasis'; inline: InlineNode[] }
+  | { kind: 'strong'; inline: InlineNode[] }
   | { kind: 'code'; text: string }
   | { kind: 'wikiLink'; target: string; alias: string | null; heading: string | null }
   | { kind: 'link'; text: string; href: string }
@@ -44,6 +44,9 @@ export interface ParsedNote {
   plainText: string;
 }
 
+/** Ceiling for one run of inline text; see the ponytail note in parseInline. */
+const MAX_INLINE_LENGTH = 20_000;
+
 const FENCE = /^(?:```|~~~)\s*([A-Za-z0-9+#-]*)\s*$/;
 const HEADING = /^(#{1,6})\s+(.*)$/;
 const UNORDERED_ITEM = /^\s*[-*+]\s+(.*)$/;
@@ -61,7 +64,7 @@ export function parseNote(body: string): ParsedNote {
 
   for (const block of blocks) {
     if (block.kind === 'heading') headings.push({ level: block.level, text: inlineText(block.inline) });
-    for (const node of inlineNodesOf(block)) {
+    for (const node of collectInline(inlineNodesOf(block))) {
       if (node.kind === 'wikiLink') {
         const known = links.some((link) => link.target === node.target && link.heading === node.heading);
         if (!known) links.push({ target: node.target, alias: node.alias, heading: node.heading });
@@ -181,6 +184,12 @@ function parseBlocks(body: string): BlockNode[] {
 }
 
 function parseInline(text: string): InlineNode[] {
+  // ponytail: inline parsing ceiling of 20k characters. A longer run of text
+  // (a pasted data URI, a minified blob) stays plain text instead of being
+  // parsed, which keeps parsing linear. Raise the cap, or chunk by paragraph
+  // and cap the imported file size, when larger inline blocks are needed.
+  if (text.length > MAX_INLINE_LENGTH) return [{ kind: 'text', text }];
+
   const nodes: InlineNode[] = [];
   let buffer = '';
   let index = 0;
@@ -248,7 +257,7 @@ function parseInline(text: string): InlineNode[] {
       const content = end === -1 ? '' : text.slice(index + 2, end);
       if (end !== -1 && isInlineContent(content)) {
         flush();
-        nodes.push({ kind: 'strong', text: content });
+        nodes.push({ kind: 'strong', inline: parseInline(content) });
         index = end + 2;
         continue;
       }
@@ -263,7 +272,7 @@ function parseInline(text: string): InlineNode[] {
         const content = end === -1 ? '' : text.slice(index + 1, end);
         if (end > index + 1 && isInlineContent(content)) {
           flush();
-          nodes.push({ kind: 'emphasis', text: content });
+          nodes.push({ kind: 'emphasis', inline: parseInline(content) });
           index = end + 1;
           continue;
         }
@@ -317,17 +326,27 @@ function inlineNodesOf(block: BlockNode): InlineNode[] {
   return [];
 }
 
+/** Flattens nested inline nodes so links and tags inside emphasis are derived. */
+function collectInline(nodes: InlineNode[]): InlineNode[] {
+  const collected: InlineNode[] = [];
+  for (const node of nodes) {
+    collected.push(node);
+    if (node.kind === 'emphasis' || node.kind === 'strong') collected.push(...collectInline(node.inline));
+  }
+  return collected;
+}
+
 function inlineText(nodes: InlineNode[]): string {
   return nodes
     .map((node) => {
       switch (node.kind) {
         case 'text':
-        case 'emphasis':
-        case 'strong':
         case 'code':
-          return node.text;
         case 'tag':
           return node.text;
+        case 'emphasis':
+        case 'strong':
+          return inlineText(node.inline);
         case 'wikiLink':
           return node.alias ?? node.target;
         case 'link':
