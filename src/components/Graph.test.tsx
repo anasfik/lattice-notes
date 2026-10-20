@@ -79,7 +79,7 @@ afterEach(async () => {
 
 describe('local graph', () => {
   it('renders the active note and its neighbours as labelled nodes', async () => {
-    await render(<Graph graph={fixture()} onSelect={() => {}} />);
+    await render(<Graph graph={fixture()} onSelect={() => {}} onNavigate={() => {}} />);
 
     expect(nodes()).toHaveLength(3);
     expect(container.querySelectorAll('.graph__edge')).toHaveLength(2);
@@ -91,7 +91,7 @@ describe('local graph', () => {
 
   it('opens a neighbour on a click', async () => {
     const onSelect = vi.fn();
-    await render(<Graph graph={fixture()} onSelect={onSelect} />);
+    await render(<Graph graph={fixture()} onSelect={onSelect} onNavigate={() => {}} />);
 
     await click(nodes()[1] as Element);
 
@@ -101,7 +101,7 @@ describe('local graph', () => {
 
   it('opens a neighbour with the keyboard and swallows the space scroll', async () => {
     const onSelect = vi.fn();
-    await render(<Graph graph={fixture()} onSelect={onSelect} />);
+    await render(<Graph graph={fixture()} onSelect={onSelect} onNavigate={() => {}} />);
 
     const enter = await pressKey(nodes()[1] as Element, 'Enter');
     expect(enter.defaultPrevented).toBe(true);
@@ -113,7 +113,7 @@ describe('local graph', () => {
   });
 
   it('keeps every node in the tab order of the domain', async () => {
-    await render(<Graph graph={fixture()} onSelect={() => {}} />);
+    await render(<Graph graph={fixture()} onSelect={() => {}} onNavigate={() => {}} />);
 
     const tabIndexes = nodes().map((node) => node.getAttribute('tabindex'));
     expect(tabIndexes).toEqual(['0', '0', '0']);
@@ -125,7 +125,7 @@ describe('local graph', () => {
   });
 
   it('pulses the active node only', async () => {
-    await render(<Graph graph={fixture()} onSelect={() => {}} />);
+    await render(<Graph graph={fixture()} onSelect={() => {}} onNavigate={() => {}} />);
 
     expect(nodes()[0]?.querySelector('.graph__pulse')).not.toBeNull();
     expect(nodes()[1]?.querySelector('.graph__pulse')).toBeNull();
@@ -133,10 +133,31 @@ describe('local graph', () => {
   });
 
   it('shows an empty state instead of an empty picture', async () => {
-    await render(<Graph graph={{ activeId: '', nodes: [], edges: [], backlinks: [] }} onSelect={() => {}} />);
+    await render(
+      <Graph
+        graph={{ activeId: '', nodes: [], edges: [], backlinks: [] }}
+        onSelect={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
 
     expect(container.querySelector('svg')).toBeNull();
     expect(container.querySelector('.graph__empty')?.textContent).toContain('No local connections yet');
+  });
+
+  it('shows a pending state instead of the empty state while the graph is behind', async () => {
+    await render(
+      <Graph
+        graph={{ activeId: '', nodes: [], edges: [], backlinks: [] }}
+        onSelect={() => {}}
+        onNavigate={() => {}}
+        graphPending
+      />,
+    );
+
+    const empty = container.querySelector('.graph__empty')?.textContent ?? '';
+    expect(empty).toContain('Updating links');
+    expect(empty).not.toContain('No local connections yet');
   });
 
   it('caps the picture at 48 nodes and keeps the backlinks', async () => {
@@ -150,7 +171,7 @@ describe('local graph', () => {
       backlinks: ['n0', 'n1', 'n2'],
     };
 
-    await render(<Graph graph={graph} onSelect={() => {}} />);
+    await render(<Graph graph={graph} onSelect={() => {}} onNavigate={() => {}} />);
 
     expect(nodes().length).toBeLessThanOrEqual(48);
     const labels = nodes().map((node) => node.getAttribute('aria-label'));
@@ -171,7 +192,7 @@ describe('local graph', () => {
       backlinks: [],
     };
 
-    await render(<Graph graph={graph} onSelect={() => {}} />);
+    await render(<Graph graph={graph} onSelect={() => {}} onNavigate={() => {}} />);
 
     expect(container.querySelector('script')).toBeNull();
     expect(nodes()[1]?.getAttribute('aria-label')).toContain('<script>alert(1)</script>');
@@ -183,8 +204,8 @@ describe('local graph', () => {
     const second = document.createElement('div');
     document.body.appendChild(second);
 
-    await render(<Graph graph={fixture()} onSelect={() => {}} />, first);
-    await render(<Graph graph={fixture()} onSelect={() => {}} />, second);
+    await render(<Graph graph={fixture()} onSelect={() => {}} onNavigate={() => {}} />, first);
+    await render(<Graph graph={fixture()} onSelect={() => {}} onNavigate={() => {}} />, second);
 
     const shape = (target: HTMLElement) =>
       Array.from(target.querySelectorAll<SVGCircleElement>('.graph__node-dot')).map((dot) => [
@@ -203,7 +224,8 @@ describe('local graph', () => {
 
   it('offers the neighbours as a touch sized list of buttons', async () => {
     const onSelect = vi.fn();
-    await render(<Graph graph={fixture()} onSelect={onSelect} />);
+    const onNavigate = vi.fn();
+    await render(<Graph graph={fixture()} onSelect={onSelect} onNavigate={onNavigate} />);
 
     const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('.graph__list button'));
     expect(buttons).toHaveLength(2);
@@ -211,6 +233,8 @@ describe('local graph', () => {
 
     await click(buttons[1] as Element);
 
-    expect(onSelect).toHaveBeenCalledWith('c');
+    // The list button is destroyed by the re-render, so it navigates.
+    expect(onNavigate).toHaveBeenCalledWith('c');
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });

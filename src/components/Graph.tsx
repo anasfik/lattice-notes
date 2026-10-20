@@ -4,7 +4,12 @@ import type { GraphNode, LocalGraph } from '../domain/vault';
 
 export interface GraphProps {
   graph: LocalGraph;
+  /** Selects a note without moving the focus, for the nodes that survive. */
   onSelect(noteId: string): void;
+  /** Selects a note and hands the keyboard to it, for the list that does not. */
+  onNavigate(noteId: string): void;
+  /** True while the graph still trails the vault. */
+  graphPending?: boolean;
   /** Upper bound of drawn nodes, the active note included. */
   maxNodes?: number;
 }
@@ -12,6 +17,9 @@ export interface GraphProps {
 const DEFAULT_MAX_NODES = 48;
 const LABEL_LIMIT = 14;
 const EMPTY_TEXT = 'No local connections yet. Add [[links]] to build the graph.';
+
+/** Shown while the graph trails the vault, so no false empty state appears. */
+export const GRAPH_PENDING_TEXT = 'Updating links…';
 
 /**
  * The link neighbourhood of the active note.
@@ -21,7 +29,13 @@ const EMPTY_TEXT = 'No local connections yet. Add [[links]] to build the graph.'
  * names only; nothing from the vault is ever treated as markup. The list of
  * neighbour buttons below the picture is the touch and screen reader path.
  */
-export default function Graph({ graph, onSelect, maxNodes = DEFAULT_MAX_NODES }: GraphProps) {
+export default function Graph({
+  graph,
+  onSelect,
+  onNavigate,
+  graphPending = false,
+  maxNodes = DEFAULT_MAX_NODES,
+}: GraphProps) {
   const baseId = useId();
   const titleId = `${baseId}-title`;
 
@@ -53,7 +67,7 @@ export default function Graph({ graph, onSelect, maxNodes = DEFAULT_MAX_NODES }:
   const neighbours = visible.filter((node) => !node.active);
 
   if (graph.nodes.length === 0) {
-    return <p className="graph__empty">{EMPTY_TEXT}</p>;
+    return <p className="graph__empty">{graphPending ? GRAPH_PENDING_TEXT : EMPTY_TEXT}</p>;
   }
 
   const caption = `Local graph for ${active?.name ?? 'this note'}`;
@@ -124,7 +138,7 @@ export default function Graph({ graph, onSelect, maxNodes = DEFAULT_MAX_NODES }:
         <ul className="graph__list" aria-label="Connected notes">
           {neighbours.map((node) => (
             <li key={node.id}>
-              <button type="button" className="graph__item" onClick={() => onSelect(node.id)}>
+              <button type="button" className="graph__item" onClick={() => onNavigate(node.id)}>
                 <span className="graph__item-name">{node.name}</span>
                 <span className="graph__item-degree">
                   {node.degree} {node.degree === 1 ? 'link' : 'links'}
@@ -134,7 +148,7 @@ export default function Graph({ graph, onSelect, maxNodes = DEFAULT_MAX_NODES }:
           ))}
         </ul>
       ) : (
-        <p className="graph__empty">{EMPTY_TEXT}</p>
+        <p className="graph__empty">{graphPending ? GRAPH_PENDING_TEXT : EMPTY_TEXT}</p>
       )}
 
       {visible.length < graph.nodes.length ? (

@@ -278,6 +278,8 @@ export default function App() {
     () => buildLocalGraph(deferredVault, deferredVault.activeNoteId ?? ''),
     [deferredVault],
   );
+  // While the graph trails the vault it may be empty for the wrong reason.
+  const graphPending = deferredVault !== vault;
   const noteNames = useMemo(
     () => new Set(activeNotes(vault).map((note) => normalizeNoteName(note.name).toLowerCase())),
     [vault],
@@ -301,6 +303,7 @@ export default function App() {
         focusNote={focusNote}
         graph={graph}
         noteNames={noteNames}
+        graphPending={graphPending}
         searchInputRef={searchInputRef}
         editorRef={editorRef}
         paletteTrigger={

@@ -4,13 +4,15 @@ import { parseNote, toPlainText } from '../domain/markdown';
 import { normalizeNoteName } from '../domain/vault';
 import type { LocalGraph } from '../domain/vault';
 import type { Note } from '../domain/types';
-import Graph from './Graph';
+import Graph, { GRAPH_PENDING_TEXT } from './Graph';
 
 export interface ContextRailProps {
   note: Note | null;
   graph: LocalGraph | null;
   /** Lower cased names of the active notes. */
   noteNames: ReadonlySet<string>;
+  /** True while the graph still trails the vault. */
+  graphPending?: boolean;
   onSelect(id: string): void;
   /** Opens a note from a backlink, whose button the navigation replaces. */
   onNavigate(id: string): void;
@@ -22,6 +24,7 @@ export default function ContextRail({
   note,
   graph,
   noteNames,
+  graphPending = false,
   onSelect,
   onNavigate,
   onWikiLink,
@@ -67,7 +70,9 @@ export default function ContextRail({
                 ))}
               </ul>
             ) : (
-              <p className="context__empty">No backlinks yet.</p>
+              <p className="context__empty">
+                {graphPending ? GRAPH_PENDING_TEXT : 'No backlinks yet.'}
+              </p>
             )}
           </nav>
 
@@ -101,7 +106,12 @@ export default function ContextRail({
             <h3 className="context__heading" id="context-graph">
               Graph
             </h3>
-            <Graph graph={graph ?? { activeId: '', nodes: [], edges: [], backlinks: [] }} onSelect={onSelect} />
+            <Graph
+              graph={graph ?? { activeId: '', nodes: [], edges: [], backlinks: [] }}
+              onSelect={onSelect}
+              onNavigate={onNavigate}
+              graphPending={graphPending}
+            />
           </section>
         </>
       ) : (

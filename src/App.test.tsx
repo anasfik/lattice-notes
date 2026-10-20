@@ -265,6 +265,18 @@ afterEach(async () => {
 });
 
 describe('workspace shell', () => {
+  it('renders without an application console error', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await renderApp();
+    } finally {
+      const messages = spy.mock.calls.map((call) => call.map(String).join(' ')).join('\n');
+      spy.mockRestore();
+      expect(messages).not.toContain('unrecognized in this browser');
+    }
+    expect(container.querySelector('search')).toBeNull();
+  });
+
   it('seeds a usable vault on the first visit', async () => {
     await renderApp();
 
@@ -744,6 +756,14 @@ describe('linked notes', () => {
     await saveVault({ ...second.vault, activeNoteId: second.note.id });
     await renderApp();
 
+    // The graph follows the vault at background priority, so it settles later.
+    await waitFor(
+      () =>
+        container
+          .querySelector('nav[aria-label="Backlinks"]')
+          ?.textContent?.includes('Alpha') === true,
+    );
+
     const nav = container.querySelector('nav[aria-label="Backlinks"]');
     expect(nav?.textContent).toContain('Alpha');
 
@@ -751,6 +771,51 @@ describe('linked notes', () => {
 
     expect(editorTitle()).toBe('Alpha');
     expect(document.activeElement).toBe(editorTextarea());
+  });
+
+  it('does not claim there are no backlinks while the graph is still settling', async () => {
+    const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]] now.');
+    const second = createNote(first.vault, 'Beta', 'Beta body.');
+    await saveVault({ ...second.vault, activeNoteId: second.note.id });
+    await renderApp();
+
+    // Sample the section while the deferred graph settles: it may show the
+    // pending state, but it must never claim there are no backlinks.
+    const samples: string[] = [];
+    await waitFor(() => {
+      const text = container.querySelector('nav[aria-label="Backlinks"]')?.textContent ?? '';
+      if (text) samples.push(text);
+      return text.includes('Alpha');
+    });
+
+    expect(samples).not.toHaveLength(0);
+    for (const sample of samples) {
+      expect(sample).not.toContain('No backlinks yet.');
+    }
+
+    expect(container.querySelector('nav[aria-label="Backlinks"]')?.textContent).toContain(
+      'Alpha',
+    );
+  });
+
+  it('shows the genuine empty state once the graph has settled', async () => {
+    const created = createNote(createEmptyVault(), 'Solo', 'Nothing links here.');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+    await renderApp();
+
+    await waitFor(
+      () =>
+        container
+          .querySelector('nav[aria-label="Backlinks"]')
+          ?.textContent?.includes('No backlinks yet.') === true,
+    );
+
+    expect(container.querySelector('nav[aria-label="Backlinks"]')?.textContent).toContain(
+      'No backlinks yet.',
+    );
+    expect(container.querySelector('.graph__empty')?.textContent).toContain(
+      'No local connections yet',
+    );
   });
 
   it('lists the outgoing links and offers to create the missing one', async () => {
@@ -787,5 +852,23 @@ describe('linked notes', () => {
     await click(container.querySelector('.graph__list button') as Element);
 
     expect(editorTitle()).toBe('Beta');
+  });
+
+  it('keeps the keyboard in the note a graph neighbour opens', async () => {
+    const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]].');
+    const second = createNote(first.vault, 'Beta', 'See [[Alpha]].');
+    await saveVault({ ...second.vault, activeNoteId: first.note.id });
+    await renderApp();
+
+    await waitFor(() => container.querySelector('.graph__list button') !== null);
+    const button = container.querySelector<HTMLButtonElement>('.graph__list button');
+    if (!button) throw new Error('no graph neighbour button');
+    button.focus();
+
+    await click(button);
+
+    expect(editorTitle()).toBe('Beta');
+    expect(document.activeElement).toBe(editorTextarea());
+    expect(document.activeElement).not.toBe(document.body);
   });
 });

@@ -51,7 +51,7 @@ export default function Search({ vault, onSelect, onAnnounce, inputRef, action }
   };
 
   return (
-    <search className="search">
+    <div role="search" className="search">
       <label className="search__label" htmlFor={fieldId}>
         Search notes
       </label>
@@ -118,6 +118,6 @@ export default function Search({ vault, onSelect, onAnnounce, inputRef, action }
           ))}
         </ul>
       ) : null}
-    </search>
+    </div>
   );
 }

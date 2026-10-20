@@ -17,6 +17,8 @@ export interface WorkspaceProps {
   focusNote: { id: string } | null;
   graph: LocalGraph | null;
   noteNames: ReadonlySet<string>;
+  /** True while the graph still trails the vault. */
+  graphPending?: boolean;
   searchInputRef?: RefObject<HTMLInputElement | null>;
   editorRef?: RefObject<HTMLTextAreaElement | null>;
   paletteTrigger?: ReactNode;
@@ -119,6 +121,7 @@ export default function Workspace(props: WorkspaceProps) {
           note={active}
           graph={props.graph}
           noteNames={props.noteNames}
+          graphPending={props.graphPending}
           onSelect={props.onSelect}
           onNavigate={props.onNavigate}
           onWikiLink={props.onWikiLink}
