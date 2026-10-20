@@ -1,0 +1,184 @@
+/* ==========================================================================
+   Lattice Notes design tokens
+
+   Instrument-panel minimalism: dense, calm, tool-like. One accent
+   (electric violet), charcoal base, layered graphite surfaces, warm white
+   ink. This block owns type, space, color, radius, border, and motion, and
+   always precedes component styling.
+
+   Contrast (WCAG 2.2 AA) against the surfaces below:
+     ink on bg 16.6:1, ink-muted on bg 8.3:1, accent on bg 6.9:1,
+     border-strong on surface 3.6:1 and on surface-raised 3.4:1 (UI
+     boundaries), focus ring on bg 6.9:1. --color-border is decorative
+     separation only and never carries meaning on its own.
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  /* Type */
+  --font-sans: 'Geist Sans', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --leading-tight: 1.25;
+  --leading-normal: 1.55;
+  --tracking-caps: 0.08em;
+
+  /* Space */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  /* Color */
+  --color-bg: #101215;
+  --color-surface: #171a1f;
+  --color-surface-raised: #1e222a;
+  --color-surface-sunken: #0b0d10;
+  --color-border: #262b33;
+  --color-border-strong: #6a7382;
+  --color-ink: #f4f1ea;
+  --color-ink-muted: #a8adb7;
+  --color-ink-faint: #7b8290;
+  --color-accent: #a78bfa;
+  --color-accent-ink: #14101f;
+  --color-focus: #a78bfa;
+  --color-danger: #f0a58f;
+
+  /* Radius */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  /* Borders */
+  --border-width: 1px;
+  --border-width-thick: 2px;
+
+  /* Motion */
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 320ms;
+  --motion-pulse: 2400ms;
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* Layout */
+  --rail-width: 3.5rem;
+  --explorer-width: 16.25rem;
+  --context-rail-width: 18.75rem;
+  --touch-target: 44px;
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p,
+ul,
+ol,
+pre,
+figure {
+  margin: 0;
+}
+
+ul,
+ol {
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: var(--color-accent);
+}
+
+:focus-visible {
+  outline: var(--border-width-thick) solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+}
+
+/* Practical touch targets on small and touch-first screens. */
+@media (pointer: coarse), (max-width: 48rem) {
+  button,
+  input,
+  select,
+  textarea,
+  a[href],
+  [role='button'],
+  [role='tab'] {
+    min-height: var(--touch-target);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ==========================================================================
+   Components
+   ========================================================================== */
+
+.app {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  max-width: 60ch;
+}
+
+.app__title {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+}
+
+.app__status {
+  color: var(--color-ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}

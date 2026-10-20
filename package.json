@@ -1,0 +1,26 @@
+{
+  "name": "lattice-notes",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Lattice Notes - a local-first, offline-first Markdown knowledge workspace with linked notes, search, backlinks, and a local link graph.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
+  }
+}
