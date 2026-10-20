@@ -25,6 +25,9 @@ import {
   restoreNote,
   updateNoteBody,
 } from './domain/vault';
+import { buildCommands } from './domain/commands';
+import type { CommandAction, ViewMode } from './domain/commands';
+import { closeTab, sanitizeTabIds, stepTab } from './domain/tabs';
 import {
   MAX_ENVELOPE_BYTES,
   MAX_IMPORT_FILES,
@@ -40,16 +43,18 @@ import {
   createStoredVault,
   loadCatalog,
   loadVault,
+  loadVaultSession,
   openStoredVault,
   renameStoredVault,
   restoreStoredVault,
   saveVault,
 } from './storage/vaultRepository';
-import type { VaultCatalog } from './storage/vaultRepository';
+import type { VaultCatalog, VaultTabSession } from './storage/vaultRepository';
 import CommandPalette from './components/CommandPalette';
 import Onboarding from './components/Onboarding';
+import QuickSwitcher from './components/QuickSwitcher';
 import VaultManager from './components/VaultManager';
-import Workspace, { isHidden } from './components/Workspace';
+import Workspace, { isCompact, isHidden } from './components/Workspace';
 import type { FocusTarget } from './components/Explorer';
 
 const SAVE_DEBOUNCE_MS = 200;
@@ -91,13 +96,37 @@ export default function App() {
   const [undoSlots, setUndoSlots] = useState<Record<string, { id: string; name: string }>>({});
   const [focusNote, setFocusNote] = useState<FocusTarget | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [searchRequest, setSearchRequest] = useState(0);
   const [focusContentRequest, setFocusContentRequest] = useState(0);
+  /** The open notes of the vault on the screen, in the order of the strip. */
+  const [openNoteIds, setOpenNoteIds] = useState<string[]>([]);
+  /** The way the note is shown next to the explorer. */
+  const [view, setView] = useState<ViewMode>(() => (isCompact() ? 'write' : 'split'));
+  /** True on a narrow screen, so the context panel can be folded away. */
+  const [compact, setCompact] = useState(() => isCompact());
+  /** Counts the requests to fold the context panel away. */
+  const [contextToggleRequest, setContextToggleRequest] = useState(0);
+  /** Asks the tab strip to put the keyboard on one of its tabs. */
+  const [tabFocus, setTabFocus] = useState<{ id: string | null; request: number }>({
+    id: null,
+    request: 0,
+  });
 
   const vaultRef = useRef(vault);
   const baseRef = useRef(vault);
+  /** The open notes that are stored, so a save knows what changed. */
+  const baseSessionRef = useRef<string[]>([]);
+  /**
+   * False while the stored tab list could not be read.
+   *
+   * A tab list that was never read must not be written back: the empty strip
+   * shown after a failed read is not the tab list of the vault, so a save
+   * writes the notes only and leaves the stored tabs alone.
+   */
+  const sessionKnownRef = useRef(true);
   const identityRef = useRef<Identity>({ id: null, generation: 0 });
   const saveSeqRef = useRef(0);
   const lastSaveSeqRef = useRef(new Map<string, number>());
@@ -108,6 +137,8 @@ export default function App() {
   const switchRef = useRef<{ promise: Promise<void> } | null>(null);
   const queuedSwitchRef = useRef<string | null>(null);
   const creatingRef = useRef(false);
+  /** The catalog of the app, so a shortcut always runs the current command. */
+  const commandsRef = useRef<CommandAction[]>([]);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
@@ -117,6 +148,12 @@ export default function App() {
   /** The undo slot of the vault that is on the screen. */
   const undoKey = vaultId ?? '';
   const undo = undoSlots[undoKey] ?? null;
+
+  /** The open notes that may be shown as tabs. */
+  const tabIds = useMemo(
+    () => sanitizeTabIds(openNoteIds, vault, vault.activeNoteId),
+    [openNoteIds, vault],
+  );
 
   /** Applies the next vault to the state and to the ref the handlers read. */
   const applyVault = useCallback((next: Vault) => {
@@ -137,34 +174,49 @@ export default function App() {
    * Puts a vault on the screen.
    *
    * The generation changes with every new vault, so a write that was started
-   * for the previous vault can no longer mark this one as saved.
+   * for the previous vault can no longer mark this one as saved. The open
+   * notes come with the vault, so two vaults never share a tab list.
    */
-  const commitVault = useCallback((nextCatalog: VaultCatalog, next: Vault, id: string) => {
-    identityRef.current = { id, generation: identityRef.current.generation + 1 };
-    vaultRef.current = next;
-    baseRef.current = next;
-    setVault(next);
-    setVaultId(id);
-    setCatalog(nextCatalog);
-    setStorageMode('ready');
-    setError(null);
-  }, []);
+  const commitVault = useCallback(
+    (nextCatalog: VaultCatalog, next: Vault, id: string, sessionIds: string[]) => {
+      identityRef.current = { id, generation: identityRef.current.generation + 1 };
+      vaultRef.current = next;
+      baseRef.current = next;
+      setVault(next);
+      setVaultId(id);
+      setCatalog(nextCatalog);
+      setStorageMode('ready');
+      setError(null);
+      const ids = sanitizeTabIds(sessionIds, next, next.activeNoteId);
+      setOpenNoteIds(ids);
+      baseSessionRef.current = ids;
+    },
+    [],
+  );
 
   /**
-   * Writes a vault to the storage.
+   * Writes a vault and its open notes to the storage.
    *
    * The write carries the identity of the vault it belongs to. A write that
    * finishes after the vault changed is dropped: it must not mark another
    * vault as saved and it must not claim that the notes on the screen are
-   * stored.
+   * stored. The content and the open notes go in one transaction, so a failed
+   * write leaves neither the notes nor the tab list behind.
    */
   const save = useCallback(
-    async (next: Vault, target: string, identity: Identity): Promise<boolean> => {
+    async (
+      next: Vault,
+      target: string,
+      identity: Identity,
+      session: VaultTabSession | null,
+    ): Promise<boolean> => {
       const seq = (saveSeqRef.current += 1);
       lastSaveSeqRef.current.set(target, seq);
       const write = (async () => {
         try {
-          await saveVault(next, target);
+          // A session that was never read is left out of the write, so the
+          // stored tab list cannot be replaced by an empty strip.
+          await saveVault(next, target, session ?? undefined);
         } catch {
           if (isCurrent(identity)) {
             setError('Local storage rejected the save. Your notes are still here in this tab.');
@@ -177,6 +229,7 @@ export default function App() {
         if (lastSaveSeqRef.current.get(target) !== seq) return true;
         if (!isCurrent(identity)) return true;
         baseRef.current = next;
+        if (session) baseSessionRef.current = session.openNoteIds;
         setError(null);
         setStorageMode('ready');
         setStatus('Saved to local storage');
@@ -210,9 +263,15 @@ export default function App() {
     }
     const identity = identityRef.current;
     if (identity.id === null) return true;
-    if (baseRef.current === vaultRef.current) return true;
-    return save(vaultRef.current, identity.id, identity);
-  }, [save]);
+    const session = sessionKnownRef.current ? sessionOf(openNoteIds, vaultRef.current) : null;
+    if (
+      baseRef.current === vaultRef.current
+      && (session === null || sameIds(baseSessionRef.current, session.openNoteIds))
+    ) {
+      return true;
+    }
+    return save(vaultRef.current, identity.id, identity, session);
+  }, [openNoteIds, save]);
 
   // Edits are applied immediately in memory and written after a short pause.
   useEffect(() => {
@@ -220,16 +279,41 @@ export default function App() {
     const identity = identityRef.current;
     const id = identity.id;
     if (id === null) return;
-    if (baseRef.current === vault) return;
+    const session = sessionKnownRef.current ? sessionOf(openNoteIds, vault) : null;
+    if (
+      baseRef.current === vault
+      && (session === null || sameIds(baseSessionRef.current, session.openNoteIds))
+    ) {
+      return;
+    }
     const timer = setTimeout(() => {
-      void save(vault, id, identity);
+      void save(vault, id, identity, session);
     }, SAVE_DEBOUNCE_MS);
     saveTimerRef.current = timer;
     return () => {
       clearTimeout(timer);
       if (saveTimerRef.current === timer) saveTimerRef.current = null;
     };
-  }, [save, storageMode, vault]);
+  }, [openNoteIds, save, storageMode, vault]);
+
+  /**
+   * Reads the open notes of a vault.
+   *
+   * A tab list that cannot be read is not a reason to refuse the vault: the
+   * notes are what matters, so the vault opens with an empty strip and the
+   * status says what happened.
+   */
+  const readSessionIds = useCallback(async (id: string): Promise<string[]> => {
+    try {
+      const session = await loadVaultSession(id);
+      sessionKnownRef.current = true;
+      return session?.openNoteIds ?? [];
+    } catch {
+      sessionKnownRef.current = false;
+      setStatus('The tab list of this vault could not be read, so it starts empty.');
+      return [];
+    }
+  }, []);
 
   /**
    * Reads the storage and opens the vault that is selected there.
@@ -265,7 +349,8 @@ export default function App() {
         );
         return;
       }
-      commitVault(opened.catalog, opened.vault, opened.catalog.activeVaultId);
+      const tabIds = await readSessionIds(opened.catalog.activeVaultId);
+      commitVault(opened.catalog, opened.vault, opened.catalog.activeVaultId, tabIds);
       setPhase('workspace');
       setStatus('Local vault restored');
     } catch {
@@ -284,13 +369,18 @@ export default function App() {
         'Local storage could not be read, so this session runs in memory only. Your notes are not saved yet.',
       );
     }
-  }, [commitVault, hasUnsavedWork]);
+  }, [commitVault, hasUnsavedWork, readSessionIds]);
 
   useEffect(() => {
     if (bootedRef.current) return;
     bootedRef.current = true;
     void boot();
   }, [boot]);
+
+  /** Puts a note in the tab strip, once. */
+  const rememberTab = useCallback((id: string) => {
+    setOpenNoteIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
+  }, []);
 
   const handleCreate = useCallback(() => {
     const current = vaultRef.current;
@@ -301,17 +391,58 @@ export default function App() {
     const wasEmpty = activeNotes(current).length === 0;
     const { vault: next, note } = createNote(current);
     applyVault({ ...next, activeNoteId: note.id });
+    rememberTab(note.id);
     setStatus(`Created ${note.name}`);
     if (wasEmpty) setFocusNote({ kind: 'note', id: note.id });
-  }, [applyVault]);
+  }, [applyVault, rememberTab]);
 
-  const handleSelect = useCallback((id: string) => {
-    const current = vaultRef.current;
-    const note = current.notes.find((candidate) => candidate.id === id);
-    if (!note) return;
-    if (current.activeNoteId !== id) applyVault({ ...current, activeNoteId: id });
-    setStatus(`Opened ${note.name}`);
-  }, [applyVault]);
+  const handleSelect = useCallback(
+    (id: string) => {
+      const current = vaultRef.current;
+      const note = current.notes.find((candidate) => candidate.id === id);
+      if (!note) return;
+      if (current.activeNoteId !== id) applyVault({ ...current, activeNoteId: id });
+      rememberTab(id);
+      setStatus(`Opened ${note.name}`);
+    },
+    [applyVault, rememberTab],
+  );
+
+  /**
+   * Closes a tab.
+   *
+   * A tab holds the id of a note, so closing it never deletes the note. The
+   * note that is on the screen moves to the tab on its right, or to the one on
+   * its left when there is none on the right.
+   */
+  const handleCloseTab = useCallback(
+    (id: string) => {
+      const current = vaultRef.current;
+      const ids = sanitizeTabIds(openNoteIds, current, current.activeNoteId);
+      const result = closeTab(ids, current.activeNoteId, id);
+      setOpenNoteIds(result.openNoteIds);
+      if (result.activeNoteId !== current.activeNoteId) {
+        applyVault({ ...current, activeNoteId: result.activeNoteId });
+      }
+      // The keyboard follows the tab that took the place of the closed one.
+      setTabFocus((focus) => ({ id: result.focusTabId, request: focus.request + 1 }));
+      const note = current.notes.find((candidate) => candidate.id === id);
+      setStatus(`Closed ${note?.name ?? 'the note'}`);
+    },
+    [applyVault, openNoteIds],
+  );
+
+  /** Walks to the next or the previous tab. */
+  const handleStepTab = useCallback(
+    (delta: number) => {
+      const current = vaultRef.current;
+      const ids = sanitizeTabIds(openNoteIds, current, current.activeNoteId);
+      const next = stepTab(ids, current.activeNoteId, delta);
+      if (!next) return;
+      handleSelect(next);
+    },
+    [handleSelect, openNoteIds],
+  );
 
   /**
    * Puts the keyboard on the content the reader can see.
@@ -363,6 +494,8 @@ export default function App() {
       const { vault: next, note } = deleteNote(current, id);
       if (!note || next === current) return;
       applyVault(next);
+      // The tab of a note that is gone is gone as well.
+      setOpenNoteIds((ids) => ids.filter((candidate) => candidate !== id));
       // The deleted row disappears with the focus on it, so the keyboard is
       // handed to the note the vault selected, or to the empty state when the
       // last note is gone.
@@ -381,6 +514,7 @@ export default function App() {
       const { vault: next, note } = restoreNote(vaultRef.current, id);
       if (!note) return false;
       applyVault({ ...next, activeNoteId: note.id });
+      rememberTab(note.id);
       setFocusNote({ kind: 'note', id: note.id });
       // The undo slot holds the restored note, so the undo control would do
       // nothing. It goes when the note comes back.
@@ -393,13 +527,56 @@ export default function App() {
       setStatus(`Restored ${note.name}`);
       return true;
     },
-    [applyVault, undoKey],
+    [applyVault, rememberTab, undoKey],
   );
 
   const handleUndo = useCallback(() => {
     if (!undo) return;
     handleRestore(undo.id);
   }, [handleRestore, undo]);
+
+  /** Renames the note that is on the screen. */
+  const handleRenameActive = useCallback(() => {
+    const current = vaultRef.current;
+    const id = current.activeNoteId;
+    if (!id) return;
+    const note = current.notes.find((candidate) => candidate.id === id);
+    if (!note) return;
+    // The platform asks for the name, so the command needs no dialog of its
+    // own and the keyboard comes back to the page afterwards.
+    const name = window.prompt('New name of the note', note.name);
+    if (name === null) return;
+    handleRename(id, name);
+  }, [handleRename]);
+
+  /** Moves the note that is on the screen to the trash. */
+  const handleTrashActive = useCallback(() => {
+    const id = vaultRef.current.activeNoteId;
+    if (!id) return;
+    handleDelete(id);
+  }, [handleDelete]);
+
+  /** Closes the tab of the note that is on the screen. */
+  const closeActiveTab = useCallback(() => {
+    const id = vaultRef.current.activeNoteId;
+    if (!id) return;
+    handleCloseTab(id);
+  }, [handleCloseTab]);
+
+  /** Opens the quick switcher. */
+  const openSwitcher = useCallback(() => {
+    setSwitcherOpen(true);
+  }, []);
+
+  /** Opens the vault manager. */
+  const openVaultManager = useCallback(() => {
+    setManagerOpen(true);
+  }, []);
+
+  /** Folds the context panel away, or shows it again. */
+  const toggleContextPanel = useCallback(() => {
+    setContextToggleRequest((request) => request + 1);
+  }, []);
 
   /** Opens the hidden file picker behind the visible import control. */
   const handleImport = useCallback(() => {
@@ -541,10 +718,11 @@ export default function App() {
       // A missing target becomes the note it names, once.
       const { vault: next, note } = createNote(vaultRef.current, wanted);
       applyVault({ ...next, activeNoteId: note.id });
+      rememberTab(note.id);
       setStatus(`Created ${note.name}`);
       focusContent();
     },
-    [applyVault, focusContent, handleSelect],
+    [applyVault, focusContent, handleSelect, rememberTab],
   );
 
   const announce = useCallback((message: string) => {
@@ -594,11 +772,14 @@ export default function App() {
         return false;
       }
 
-      commitVault(opened.catalog, opened.vault, opened.catalog.activeVaultId);
+      // The tab list belongs to the vault that is opened, so the open notes of
+      // the other vault never follow the reader.
+      const tabIds = await readSessionIds(opened.catalog.activeVaultId);
+      commitVault(opened.catalog, opened.vault, opened.catalog.activeVaultId, tabIds);
       setStatus(`Opened ${vaultName(opened.catalog, opened.catalog.activeVaultId)}`);
       return true;
     },
-    [commitVault, flushPendingSave],
+    [commitVault, flushPendingSave, readSessionIds],
   );
 
   /**
@@ -660,7 +841,7 @@ export default function App() {
           throw new Error('the notes of this vault could not be saved');
         }
         const created = await createStoredVault(name, next);
-        commitVault(created.catalog, created.vault, created.catalog.activeVaultId);
+        commitVault(created.catalog, created.vault, created.catalog.activeVaultId, []);
         setStatus(
           `Created the vault ${vaultName(created.catalog, created.catalog.activeVaultId)}`,
         );
@@ -756,7 +937,13 @@ export default function App() {
         }
       }
       const identity = identityRef.current;
-      const saved = await save(vaultRef.current, identity.id ?? LEGACY_VAULT_ID, identity);
+      const session = sessionOf(openNoteIds, vaultRef.current);
+      const saved = await save(
+        vaultRef.current,
+        identity.id ?? LEGACY_VAULT_ID,
+        identity,
+        session,
+      );
       if (saved && identity.id === null) {
         // The notes are stored again, so the vault needs an identity before
         // the next keystroke can be written. The catalog stays as it is: a
@@ -768,7 +955,7 @@ export default function App() {
     }
 
     await boot();
-  }, [boot, retryKind, save, storageMode]);
+  }, [boot, openNoteIds, retryKind, save, storageMode]);
 
   /**
    * Reads the catalog again when the manager opens.
@@ -788,40 +975,105 @@ export default function App() {
     })();
   }, [managerOpen]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      // The palette is modal: a shortcut behind it would act on a note the
-      // user cannot see.
-      if (paletteOpen) return;
-      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
-      if (event.key.toLowerCase() !== 'n') return;
-      event.preventDefault();
-      handleCreate();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleCreate, paletteOpen]);
+  /**
+   * Runs a command of the catalog.
+   *
+   * The toolbar, the shortcuts and the palette all go through here, so a
+   * command that cannot run does nothing everywhere.
+   */
+  const runCommand = useCallback((id: string) => {
+    const command = commandsRef.current.find((entry) => entry.id === id);
+    if (!command || command.disabledReason) return;
+    command.run();
+  }, []);
 
-  // The palette and the search field are reachable from anywhere, including
-  // from the editor.
+  /**
+   * The catalog of the app.
+   *
+   * Every action that really exists has a label, a category and a real
+   * handler. A command that needs a note and has none says so instead of
+   * disappearing from the list.
+   */
+  const commands = useMemo<CommandAction[]>(
+    () =>
+      buildCommands(
+        {
+          hasActiveNote: vault.activeNoteId !== null,
+          canUndo: undo !== null,
+          openTabCount: tabIds.length,
+          contextPanelToggleable: compact,
+        },
+        {
+          createNote: handleCreate,
+          renameNote: handleRenameActive,
+          trashNote: handleTrashActive,
+          undo: handleUndo,
+          importMarkdown: handleImport,
+          exportVault: handleExport,
+          setViewMode: setView,
+          openSwitcher: openSwitcher,
+          focusSearch: requestSearch,
+          openVaultManager: openVaultManager,
+          toggleContextPanel: toggleContextPanel,
+          closeTab: closeActiveTab,
+          nextTab: () => handleStepTab(1),
+          previousTab: () => handleStepTab(-1),
+        },
+      ),
+    [
+      compact,
+      closeActiveTab,
+      handleCreate,
+      handleExport,
+      handleImport,
+      handleRenameActive,
+      handleStepTab,
+      handleTrashActive,
+      handleUndo,
+      openSwitcher,
+      openVaultManager,
+      requestSearch,
+      tabIds.length,
+      toggleContextPanel,
+      undo,
+      vault.activeNoteId,
+    ],
+  );
+  commandsRef.current = commands;
+
+  // A modal is open: a shortcut behind it would act on a note the user
+  // cannot see.
+  const modalOpen = paletteOpen || switcherOpen || managerOpen;
+
+  // The palette, the quick switcher and the new note are reachable from
+  // anywhere, including from the editor.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (paletteOpen) return;
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.repeat) return;
       const key = event.key.toLowerCase();
+      if (key === 'p') {
+        // The browser would print the page; the quick switcher takes the
+        // shortcut, and the print dialog never opens.
+        event.preventDefault();
+        if (modalOpen) return;
+        setSwitcherOpen(true);
+        return;
+      }
       if (key === 'k') {
         event.preventDefault();
+        if (modalOpen) return;
         setPaletteOpen(true);
         return;
       }
-      if (key === 'p') {
+      if (key === 'n') {
+        if (modalOpen) return;
         event.preventDefault();
-        requestSearch();
+        runCommand('note.new');
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [paletteOpen, requestSearch]);
+  }, [modalOpen, runCommand]);
 
   // The graph parses every body, so it follows the vault at background
   // priority instead of on every keystroke.
@@ -868,7 +1120,13 @@ export default function App() {
         searchRequest={searchRequest}
         focusContentRequest={focusContentRequest}
         focusContent={focusContent}
-        onOpenVaults={() => setManagerOpen(true)}
+        tabIds={tabIds}
+        tabFocus={tabFocus}
+        view={view}
+        onViewChange={setView}
+        contextToggleRequest={contextToggleRequest}
+        onCompactChange={setCompact}
+        onOpenVaults={openVaultManager}
         onOpenPalette={openPalette}
         onRetry={() => {
           void handleRetry();
@@ -876,7 +1134,7 @@ export default function App() {
         onDismissImport={() => setImportError(null)}
         onSelect={handleSelect}
         onNavigate={handleNavigate}
-        onCreate={handleCreate}
+        onCreate={() => runCommand('note.new')}
         onRename={handleRename}
         onDelete={handleDelete}
         onRestore={handleRestore}
@@ -887,15 +1145,21 @@ export default function App() {
         onImport={handleImport}
         onExport={handleExport}
         onImportFiles={handleImportFiles}
+        onSelectTab={handleSelect}
+        onCloseTab={handleCloseTab}
         fileInputRef={fileInputRef}
       />
       <CommandPalette
         open={paletteOpen}
-        vault={vault}
+        commands={commands}
         onClose={() => setPaletteOpen(false)}
+        onAnnounce={announce}
+      />
+      <QuickSwitcher
+        open={switcherOpen}
+        vault={vault}
+        onClose={() => setSwitcherOpen(false)}
         onSelect={handleSelect}
-        onCreate={handleCreate}
-        onFocusSearch={requestSearch}
         onAnnounce={announce}
       />
       {catalog && vaultId ? (
@@ -928,6 +1192,24 @@ export default function App() {
 /** The name of a vault in the catalog. */
 function vaultName(catalog: VaultCatalog, id: string): string {
   return catalog.vaults.find((member) => member.id === id)?.name ?? 'this vault';
+}
+
+/**
+ * The open notes of a vault, as the session that is stored with it.
+ *
+ * The ids are cleaned up first, so a note that is gone never stays in the
+ * stored session and the note that is on the screen always has a tab.
+ */
+function sessionOf(openNoteIds: readonly string[], vault: Vault): VaultTabSession {
+  return {
+    version: 1,
+    openNoteIds: sanitizeTabIds(openNoteIds, vault, vault.activeNoteId),
+  };
+}
+
+/** True when two lists of ids hold the same ids in the same order. */
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
 }
 
 /**

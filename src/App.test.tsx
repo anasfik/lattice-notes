@@ -13,9 +13,11 @@ import {
   createStoredVault,
   loadCatalog,
   loadVault,
+  loadVaultSession,
   openStoredVault,
   saveVault,
 } from './storage/vaultRepository';
+import type { VaultTabSession } from './storage/vaultRepository';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,22 +30,24 @@ const storage = vi.hoisted(() => ({
   /** The milliseconds every next write to a key waits for. */
   delays: new Map<string, number[]>(),
   /** The writes that were started, so a test can wait for one to land. */
-  writes: [] as { key: string; done: boolean; failed: boolean }[],
+  writes: [] as { key: string; done: boolean; failed: boolean; session: unknown }[],
   /** The writes that fail, per key. */
   failures: new Map<string, number>(),
   /** The reads of a vault that fail, per id. */
   readFailures: new Map<string, number>(),
   /** The milliseconds a read of a vault waits for, per id. */
   readDelays: new Map<string, number>(),
+  /** The reads of a tab list that fail, per vault id. */
+  sessionFailures: new Map<string, number>(),
 }));
 
 vi.mock('./storage/vaultRepository', async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import('./storage/vaultRepository');
   return {
     ...actual,
-    saveVault: async (vault: Vault, id?: string) => {
+    saveVault: async (vault: Vault, id?: string, session?: VaultTabSession) => {
       const key = id ?? 'current';
-      const record = { key, done: false, failed: false };
+      const record = { key, done: false, failed: false, session: session ?? null };
       storage.writes.push(record);
       const queue = storage.delays.get(key);
       const wait = queue && queue.length > 0 ? (queue.shift() as number) : 0;
@@ -55,7 +59,7 @@ vi.mock('./storage/vaultRepository', async (importOriginal) => {
         record.done = true;
         throw new Error('the local vault could not be written');
       }
-      await actual.saveVault(vault, id);
+      await actual.saveVault(vault, id, session);
       record.done = true;
     },
     openStoredVault: async (id: string) => {
@@ -67,6 +71,14 @@ vi.mock('./storage/vaultRepository', async (importOriginal) => {
         throw new Error('the stored vault could not be opened');
       }
       return actual.openStoredVault(id);
+    },
+    loadVaultSession: async (id: string) => {
+      const failures = storage.sessionFailures.get(id) ?? 0;
+      if (failures > 0) {
+        storage.sessionFailures.set(id, failures - 1);
+        throw new Error('the stored tab list could not be read');
+      }
+      return actual.loadVaultSession(id);
     },
   };
 });
@@ -273,6 +285,34 @@ function paletteOptions(): HTMLElement[] {
   return Array.from(paletteDialog().querySelectorAll<HTMLElement>('[role="option"]'));
 }
 
+function switcherDialog(): HTMLDialogElement {
+  const found = container.querySelector<HTMLDialogElement>('dialog.switcher');
+  if (!found) throw new Error('no switcher dialog');
+  return found;
+}
+
+function switcherInput(): HTMLInputElement {
+  const found = switcherDialog().querySelector<HTMLInputElement>('input');
+  if (!found) throw new Error('no switcher input');
+  return found;
+}
+
+function switcherOptions(): HTMLElement[] {
+  return Array.from(switcherDialog().querySelectorAll<HTMLElement>('[role="option"]'));
+}
+
+/** The names of the open tabs, in the order of the strip. */
+function tabLabels(): string[] {
+  return queryAll<HTMLButtonElement>('.tabs__label').map(
+    (button) => button.textContent?.trim() ?? '',
+  );
+}
+
+/** The close controls of the open tabs, in the order of the strip. */
+function tabCloses(): HTMLButtonElement[] {
+  return queryAll<HTMLButtonElement>('.tabs__close');
+}
+
 async function waitFor(check: () => boolean | Promise<boolean>, timeout = 4000): Promise<void> {
   // Waiting runs with the act environment off, the way React Testing Library
   // does it: asynchronous app updates may land between assertions, and the
@@ -311,9 +351,15 @@ async function fill(element: HTMLInputElement | HTMLTextAreaElement, value: stri
   });
 }
 
-async function pressKey(element: Element, key: string): Promise<void> {
+async function pressKey(
+  element: Element,
+  key: string,
+  init: KeyboardEventInit = {},
+): Promise<void> {
   await act(async () => {
-    element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    element.dispatchEvent(
+      new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }),
+    );
   });
 }
 
@@ -425,6 +471,22 @@ async function openPalette(): Promise<void> {
       new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }),
     );
   });
+}
+
+/** Opens the quick switcher with the shortcut under test. */
+async function openSwitcher(): Promise<void> {
+  await act(async () => {
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true, cancelable: true }),
+    );
+  });
+}
+
+/** Runs a command of the catalog through the palette. */
+async function runCommand(label: string): Promise<void> {
+  await openPalette();
+  await fill(paletteInput(), label);
+  await pressKey(paletteInput(), 'Enter');
 }
 
 beforeEach(async () => {
@@ -1097,11 +1159,7 @@ describe('compact panels', () => {
       window.dispatchEvent(new Event('resize'));
     });
 
-    await act(async () => {
-      window.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true, cancelable: true }),
-      );
-    });
+    await runCommand('Search workspace');
 
     await waitFor(() => document.activeElement === searchInput());
     expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(false);
@@ -1492,15 +1550,11 @@ describe('search', () => {
     expect(container.querySelector('.search__empty')?.textContent).toContain('Roadmap');
   });
 
-  it('focuses the search field with Ctrl+P from the editor', async () => {
+  it('focuses the search field with the search command', async () => {
     await renderRoadmap();
     editorTextarea().focus();
 
-    await act(async () => {
-      window.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true, cancelable: true }),
-      );
-    });
+    await runCommand('Search workspace');
 
     expect(document.activeElement).toBe(searchInput());
   });
@@ -1547,30 +1601,30 @@ describe('command palette', () => {
     expect(paletteDialog().hasAttribute('open')).toBe(false);
   });
 
-  it('opens a note from the palette with the keyboard', async () => {
+  it('opens a note with the quick switcher', async () => {
     const first = createNote(createEmptyVault(), 'Alpha', 'Body one.');
     const second = createNote(first.vault, 'Beta', 'Body two.');
     await saveVault({ ...second.vault, activeNoteId: first.note.id });
     await renderLegacyApp();
 
-    await openPalette();
-    await fill(paletteInput(), 'Beta');
+    await openSwitcher();
+    await fill(switcherInput(), 'Beta');
 
-    const options = paletteOptions();
+    const options = switcherOptions();
     expect(options).toHaveLength(1);
     expect(options[0]?.textContent).toContain('Beta');
 
-    await pressKey(paletteInput(), 'Enter');
+    await pressKey(switcherInput(), 'Enter');
 
     expect(noteTitle()).toBe('Beta');
-    expect(paletteDialog().hasAttribute('open')).toBe(false);
+    expect(switcherDialog().hasAttribute('open')).toBe(false);
   });
 
   it('moves the active option with the arrow keys', async () => {
     await renderLegacyApp();
 
     await openPalette();
-    expect(paletteOptions()).toHaveLength(2);
+    expect(paletteOptions().length).toBeGreaterThan(2);
 
     await pressKey(paletteInput(), 'ArrowDown');
     expect(paletteInput().getAttribute('aria-activedescendant')).toContain('option-1');
@@ -1584,12 +1638,24 @@ describe('command palette', () => {
 
     await openPalette();
 
-    expect(paletteInput().getAttribute('aria-label')).toBe('Search commands and notes');
+    expect(paletteInput().getAttribute('aria-label')).toBe('Search commands');
     expect(paletteInput().getAttribute('aria-expanded')).toBe('true');
 
     await fill(paletteInput(), 'zzz absent');
 
     expect(paletteInput().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('keeps a command that cannot run and says why', async () => {
+    const created = createNote(createEmptyVault(), 'Only note');
+    await saveVault({ ...created.vault, activeNoteId: null });
+    await renderLegacyApp();
+
+    await openPalette();
+
+    const rename = paletteOptions().find((element) => element.textContent?.includes('Rename note'));
+    expect(rename?.textContent).toContain('Open a note first');
+    expect(rename?.getAttribute('aria-disabled')).toBe('true');
   });
 
   it('does not create a note behind the open palette', async () => {
@@ -2418,5 +2484,341 @@ describe('scroll of the panes', () => {
     await click(buttonByName('Getting started'));
 
     expect(preview.scrollTop).toBe(0);
+  });
+
+  it('keeps the scroll offset of a note when the reader comes back', async () => {
+    await renderLegacyApp();
+
+    const textarea = editorTextarea();
+    textarea.scrollTop = 120;
+    // A browser tells the panes about a scroll, so the offset belongs to the
+    // note that is on the screen.
+    textarea.dispatchEvent(new Event('scroll'));
+
+    await click(buttonByName('Getting started'));
+    expect(textarea.scrollTop).toBe(0);
+
+    await click(buttonByName('Welcome to Lattice Notes'));
+    expect(textarea.scrollTop).toBe(120);
+  });
+});
+
+describe('quick switcher', () => {
+  it('opens with Ctrl+P and keeps the browser from printing', async () => {
+    await renderLegacyApp();
+    const event = new KeyboardEvent('keydown', {
+      key: 'p',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    await act(async () => {
+      window.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(switcherDialog().hasAttribute('open')).toBe(true);
+    expect(document.activeElement).toBe(switcherInput());
+    // The command palette is a different dialog.
+    expect(paletteDialog().hasAttribute('open')).toBe(false);
+  });
+
+  it('finds a note by its title and by its body', async () => {
+    await renderLegacyApp();
+
+    await openSwitcher();
+    await fill(switcherInput(), 'Getting started');
+    // The title of one note and the body of the two notes that link to it.
+    expect(switcherOptions().length).toBeGreaterThan(1);
+    expect(switcherOptions()[0]?.textContent).toContain('Getting started');
+
+    await fill(switcherInput(), 'browser');
+    expect(switcherOptions()).toHaveLength(1);
+    expect(switcherOptions()[0]?.textContent).toContain('Welcome to Lattice Notes');
+    expect(switcherOptions()[0]?.querySelector('.switcher__snippet')?.textContent).toContain(
+      'browser',
+    );
+  });
+
+  it('says that nothing matches the query', async () => {
+    await renderLegacyApp();
+
+    await openSwitcher();
+    await fill(switcherInput(), 'zzz absent');
+
+    expect(switcherOptions()).toHaveLength(0);
+    expect(switcherDialog().querySelector('.switcher__empty')?.textContent).toContain('zzz absent');
+  });
+
+  it('never creates a note while it is open', async () => {
+    await renderLegacyApp();
+    const before = noteNames().length;
+
+    await openSwitcher();
+    await fill(switcherInput(), 'Ghost note');
+
+    expect(noteNames()).toHaveLength(before);
+  });
+
+  it('does not open a note while the text is composed', async () => {
+    await renderLegacyApp();
+
+    await openSwitcher();
+    await fill(switcherInput(), 'Getting started');
+    await pressKey(switcherInput(), 'Enter', { isComposing: true });
+
+    expect(noteTitle()).toBe('Welcome to Lattice Notes');
+  });
+
+  it('closes with Escape and gives the keyboard back', async () => {
+    await renderLegacyApp();
+    const trigger = buttonByName('Commands');
+    trigger.focus();
+
+    await openSwitcher();
+    await pressKey(switcherInput(), 'Escape');
+
+    expect(switcherDialog().hasAttribute('open')).toBe(false);
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('does nothing while another modal is open', async () => {
+    await renderLegacyApp();
+    const before = noteNames().length;
+
+    await openPalette();
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(switcherDialog().hasAttribute('open')).toBe(false);
+    expect(paletteDialog().hasAttribute('open')).toBe(true);
+    expect(noteNames()).toHaveLength(before);
+  });
+
+  it('keeps one polite live region while it is open', async () => {
+    await renderLegacyApp();
+
+    await openSwitcher();
+    await fill(switcherInput(), 'Getting');
+
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
+  });
+});
+
+describe('note tabs', () => {
+  it('shows one tab for the note that is on the screen', async () => {
+    await renderLegacyApp();
+
+    await waitFor(() => tabLabels().length > 0);
+    expect(tabLabels()).toEqual(['Welcome to Lattice Notes']);
+  });
+
+  it('opens a tab for a note and never opens it twice', async () => {
+    await renderLegacyApp();
+
+    await click(buttonByName('Getting started'));
+    expect(tabLabels()).toEqual(['Welcome to Lattice Notes', 'Getting started']);
+
+    await click(buttonByName('Getting started'));
+    expect(tabLabels()).toHaveLength(2);
+  });
+
+  it('closes a tab without deleting the note', async () => {
+    await renderLegacyApp();
+    await click(buttonByName('Getting started'));
+
+    await click(tabCloses()[1] as Element);
+
+    expect(tabLabels()).toEqual(['Welcome to Lattice Notes']);
+    expect(noteNames()).toContain('Getting started');
+  });
+
+  it('takes the right neighbour when the active tab closes', async () => {
+    await renderLegacyApp();
+    await click(buttonByName('Getting started'));
+    await click(buttonByName('Welcome to Lattice Notes'));
+
+    await click(tabCloses()[0] as Element);
+
+    expect(tabLabels()).toEqual(['Getting started']);
+    expect(noteTitle()).toBe('Getting started');
+  });
+
+  it('takes the left neighbour when the active tab is the last one', async () => {
+    await renderLegacyApp();
+    await click(buttonByName('Getting started'));
+
+    await click(tabCloses()[1] as Element);
+
+    expect(tabLabels()).toEqual(['Welcome to Lattice Notes']);
+    expect(noteTitle()).toBe('Welcome to Lattice Notes');
+  });
+
+  it('keeps the keyboard on the tab that took its place', async () => {
+    await renderLegacyApp();
+    await click(buttonByName('Getting started'));
+    await click(buttonByName('Welcome to Lattice Notes'));
+
+    await click(tabCloses()[0] as Element);
+
+    await waitFor(() => document.activeElement !== document.body);
+    expect((document.activeElement as HTMLElement | null)?.textContent).toBe('Getting started');
+  });
+
+  it('selects nothing when the last tab closes and keeps it after a reload', async () => {
+    await renderLegacyApp();
+
+    await click(tabCloses()[0] as Element);
+
+    expect(tabLabels()).toEqual([]);
+    expect(container.querySelector('.workspace__empty-note')).not.toBeNull();
+    await waitFor(async () => {
+      const stored = await loadVault();
+      return stored?.activeNoteId === null;
+    });
+
+    await remountApp();
+
+    expect(tabLabels()).toEqual([]);
+    expect(container.querySelector('.workspace__empty-note')).not.toBeNull();
+    // The notes are still there.
+    expect(noteNames().length).toBeGreaterThan(1);
+  });
+
+  it('follows the name of a renamed note', async () => {
+    await renderLegacyApp();
+
+    await click(buttonByName('Rename Welcome to Lattice Notes'));
+    const input = container.querySelector<HTMLInputElement>('.explorer__rename-input');
+    if (!input) throw new Error('no rename input');
+    await fill(input, 'Welcome');
+    await pressKey(input, 'Enter');
+
+    expect(tabLabels()).toEqual(['Welcome']);
+  });
+
+  it('removes the tab of a trashed note and brings it back with the undo', async () => {
+    await renderLegacyApp();
+    await click(buttonByName('Getting started'));
+    await click(buttonByName('Welcome to Lattice Notes'));
+
+    await click(buttonByName('Delete Getting started'));
+    expect(tabLabels()).toEqual(['Welcome to Lattice Notes']);
+
+    await click(buttonByName('Undo delete'));
+    expect(tabLabels()).toEqual(['Welcome to Lattice Notes', 'Getting started']);
+  });
+
+  it('stores the open notes with the vault', async () => {
+    await renderLegacyApp();
+    await click(buttonByName('Getting started'));
+
+    await waitFor(async () => {
+      const session = await loadVaultSession('current');
+      return (session?.openNoteIds.length ?? 0) === 2;
+    });
+  });
+
+  it('leaves the stored tab list alone when it cannot be read', async () => {
+    await renderLegacyApp();
+    await click(buttonByName('Getting started'));
+    await waitFor(async () => {
+      const session = await loadVaultSession('current');
+      return (session?.openNoteIds.length ?? 0) === 2;
+    });
+
+    // The next boot reads the vault, but not its tab list: the empty strip is
+    // not the tab list of the vault, so it must not be written back.
+    storage.sessionFailures.set('current', 1);
+    await remountApp();
+    await fill(editorTextarea(), 'A draft written without the tab list');
+    await sleep(600);
+
+    expect((await loadVaultSession('current'))?.openNoteIds).toHaveLength(2);
+    const written = [...storage.writes].reverse().find((write) => write.key === 'current' && write.done);
+    expect(written?.session).toBeNull();
+  });
+
+  it('moves the keyboard into the note created from the empty panel', async () => {
+    await renderLegacyApp();
+    await click(buttonByName('Close Welcome to Lattice Notes'));
+
+    const create = container.querySelector<HTMLButtonElement>('.workspace__empty-note-action');
+    if (!create) throw new Error('no empty note action');
+    await click(create);
+
+    expect(document.activeElement).toBe(editorTextarea());
+  });
+
+  it('keeps the tabs of two vaults apart', async () => {
+    await renderLegacyApp();
+    // A second vault with two notes of its own.
+    const first = createNote(createEmptyVault(), 'Only in B', 'body of B');
+    const second = createNote(first.vault, 'Second in B', 'more of B');
+    const created = await createStoredVault('Second vault', {
+      ...second.vault,
+      activeNoteId: first.note.id,
+    });
+    const secondId = created.catalog.activeVaultId;
+    await openStoredVault('current');
+
+    await click(buttonByName('Getting started'));
+    await waitFor(async () => (await loadVaultSession('current'))?.openNoteIds.length === 2);
+
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+    await waitFor(() => noteTitle() === 'Only in B');
+
+    expect(tabLabels()).toEqual(['Only in B']);
+
+    await click(buttonByName('Second in B'));
+    await waitFor(async () => (await loadVaultSession(secondId))?.openNoteIds.length === 2);
+
+    expect(tabLabels()).toEqual(['Only in B', 'Second in B']);
+    // The first vault keeps its own tabs.
+    expect((await loadVaultSession('current'))?.openNoteIds).toHaveLength(2);
+  });
+
+  it('leaves the tabs of the open vault alone when a switch fails', async () => {
+    await renderLegacyApp();
+    const second = await storeSecondVault();
+    await click(buttonByName('Getting started'));
+    await waitFor(async () => {
+      const session = await loadVaultSession('current');
+      return (session?.openNoteIds.length ?? 0) === 2;
+    });
+    storage.readFailures.set(second, 1);
+
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+
+    await waitFor(() => alertText().includes('could not be opened'));
+    expect(tabLabels()).toEqual(['Welcome to Lattice Notes', 'Getting started']);
+    const session = await loadVaultSession('current');
+    expect(session?.openNoteIds).toHaveLength(2);
+  });
+
+  it('drops unknown, trashed and repeated ids from a stored session', async () => {
+    const first = createNote(createEmptyVault(), 'Alpha');
+    const second = createNote(first.vault, 'Beta');
+    const third = createNote(second.vault, 'Gamma');
+    const trashed = deleteNote(third.vault, third.note.id);
+    await saveVault(
+      { ...trashed.vault, activeNoteId: first.note.id },
+      'current',
+      { version: 1, openNoteIds: ['not-a-note', first.note.id, first.note.id, third.note.id] },
+    );
+
+    await renderLegacyApp();
+
+    await waitFor(() => tabLabels().length > 0);
+    expect(tabLabels()).toEqual(['Alpha']);
   });
 });

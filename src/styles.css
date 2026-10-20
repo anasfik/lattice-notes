@@ -583,7 +583,8 @@ a {
 
 /* A closed panel is really closed, whatever the component display rule says. */
 .workspace__explorer[hidden],
-.workspace__context[hidden] {
+.workspace__context[hidden],
+.workspace__panes[hidden] {
   display: none;
 }
 
@@ -1102,6 +1103,16 @@ a {
   font-size: var(--text-sm);
 }
 
+/* The group a command belongs to. */
+.palette__option-category {
+  margin-right: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+}
+
 .palette__option-hint {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
@@ -1111,10 +1122,209 @@ a {
   white-space: nowrap;
 }
 
+/* A command that cannot run keeps its place and says why. */
+.palette__option[aria-disabled='true'] {
+  color: var(--color-ink-faint);
+  cursor: not-allowed;
+}
+
+.palette__option[aria-disabled='true'] .palette__option-hint {
+  color: var(--color-danger);
+}
+
 .palette__empty {
   padding: var(--space-3) var(--space-4);
   color: var(--color-ink-muted);
   font-size: var(--text-sm);
+}
+
+.palette__count {
+  padding: var(--space-2) var(--space-4);
+  border-top: var(--border-width) solid var(--color-border);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--color-ink-faint);
+}
+
+/* Quick switcher ----------------------------------------------------------- */
+
+.switcher {
+  width: min(34rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  padding: 0;
+  color: var(--color-ink);
+  background: var(--color-surface-raised);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.switcher::backdrop {
+  background: rgb(0 0 0 / 0.5);
+}
+
+.switcher__title {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.switcher__label {
+  display: block;
+  padding: var(--space-3) var(--space-4) 0;
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+}
+
+.switcher__input {
+  width: 100%;
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  font: inherit;
+  font-size: var(--text-md);
+  color: var(--color-ink);
+  background: transparent;
+  border: 0;
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.switcher__input::placeholder {
+  color: var(--color-ink-faint);
+}
+
+.switcher__list {
+  list-style: none;
+  padding: var(--space-2);
+  margin: 0;
+  display: grid;
+  gap: var(--space-1);
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.switcher__option {
+  display: grid;
+  gap: var(--space-1);
+  min-height: var(--touch-target);
+  padding: var(--space-2) var(--space-3);
+  border-left: var(--border-width-thick) solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.switcher__option[aria-selected='true'] {
+  background: var(--color-surface-sunken);
+  border-left-color: var(--color-accent);
+}
+
+.switcher__option-name {
+  font-size: var(--text-sm);
+}
+
+.switcher__snippet {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.switcher__empty {
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
+
+/* Note tabs --------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.tabs__tab {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  max-width: 16rem;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.tabs__label {
+  min-height: var(--touch-target);
+  max-width: 12rem;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabs__label[aria-current='true'] {
+  color: var(--color-ink);
+  background: var(--color-surface-raised);
+}
+
+.tabs__close {
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
+  padding: 0;
+  font: inherit;
+  font-size: var(--text-md);
+  line-height: 1;
+  color: var(--color-ink-faint);
+  background: none;
+  border: 0;
+  border-left: var(--border-width) solid var(--color-border);
+  cursor: pointer;
+}
+
+.tabs__close:hover {
+  color: var(--color-ink);
+}
+
+/* The panel that shows when no note is open. */
+.workspace__empty-note {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+  padding: var(--space-6) var(--space-5);
+  color: var(--color-ink-muted);
+}
+
+.workspace__empty-note-text {
+  font-size: var(--text-sm);
+}
+
+.workspace__empty-note-action {
+  min-height: var(--touch-target);
+  padding: 0 var(--space-4);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  background: var(--color-surface-sunken);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.workspace__empty-note-hint {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-ink-faint);
 }
 
 .preview__tag {
@@ -1701,6 +1911,19 @@ a {
 
   .workspace__statusbar {
     padding: 0 var(--space-4);
+  }
+
+  /* The tab strip scrolls inside itself, so the page never gets wider. */
+  .tabs {
+    padding: var(--space-1) var(--space-2);
+  }
+
+  .tabs__tab {
+    max-width: 12rem;
+  }
+
+  .tabs__label {
+    max-width: 9rem;
   }
 
   .editor {

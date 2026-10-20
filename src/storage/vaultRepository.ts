@@ -23,6 +23,7 @@ const DOCUMENT_KEY = 'current';
 const CATALOG_KEY = 'catalog';
 const DOCUMENT_VERSION = 1;
 const CATALOG_VERSION = 1;
+const SESSION_VERSION = 1;
 /** The legacy document keeps the reserved id and its own key. */
 const LEGACY_VAULT_ID = 'current';
 const LEGACY_VAULT_NAME = 'My vault';
@@ -40,6 +41,18 @@ export interface VaultCatalog {
   version: 1;
   activeVaultId: string;
   vaults: VaultMetadata[];
+}
+
+/**
+ * The open notes of one vault.
+ *
+ * The session holds ids only, never bodies, so a tab strip can never keep a
+ * second copy of a note. It belongs to one vault and is stored under its own
+ * key, so two vaults never share a tab list.
+ */
+export interface VaultTabSession {
+  version: 1;
+  openNoteIds: string[];
 }
 
 interface VaultDocument {
@@ -71,13 +84,49 @@ export async function loadVault(id: string = LEGACY_VAULT_ID): Promise<Vault | n
  * Writes the vault as a versioned document.
  *
  * The legacy document is written by default, whatever the catalog selection
- * says. Rejects when the write fails.
+ * says. A session is written in the same transaction as the document, so a
+ * failed write leaves neither the notes nor the tab list behind. Rejects when
+ * the write fails.
  */
-export async function saveVault(vault: Vault, id: string = LEGACY_VAULT_ID): Promise<void> {
+export async function saveVault(
+  vault: Vault,
+  id: string = LEGACY_VAULT_ID,
+  session?: VaultTabSession,
+): Promise<void> {
+  assertVaultId(id);
+  if (session !== undefined) assertSession(session);
+  const db = await openDatabase();
+  try {
+    if (session === undefined) {
+      await writeDocument(db, { version: DOCUMENT_VERSION, vault }, documentKey(id));
+      return;
+    }
+    await writeDocumentWithSession(
+      db,
+      { version: DOCUMENT_VERSION, vault },
+      documentKey(id),
+      session,
+      sessionKey(id),
+    );
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Reads the open notes of one vault.
+ *
+ * Resolves `null` when the vault has no session. A session that is not a
+ * versioned list of ids rejects, because a broken session must not look like
+ * an empty one.
+ */
+export async function loadVaultSession(id: string): Promise<VaultTabSession | null> {
   assertVaultId(id);
   const db = await openDatabase();
   try {
-    await writeDocument(db, { version: DOCUMENT_VERSION, vault }, documentKey(id));
+    const record = await readDocument(db, sessionKey(id));
+    if (record === undefined || record === null) return null;
+    return readSession(record);
   } finally {
     db.close();
   }
@@ -546,6 +595,43 @@ function writeDocument(db: IDBDatabase, document: VaultDocument, key: string): P
 }
 
 /**
+ * Writes the document and the session in one transaction.
+ *
+ * Both records belong to one write, so a failure changes neither the notes nor
+ * the tab list. The session is written first, so a document that cannot be
+ * stored rolls the session back with it.
+ */
+function writeDocumentWithSession(
+  db: IDBDatabase,
+  document: VaultDocument,
+  key: string,
+  session: VaultTabSession,
+  sessionKey: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readwrite');
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = (event) =>
+      reject(requestError(event) ?? new Error('The local vault could not be written.'));
+    transaction.onabort = () => reject(transaction.error ?? new Error('The local vault write was aborted.'));
+    const store = transaction.objectStore(STORE_NAME);
+    try {
+      store.put(session, sessionKey);
+      store.put(document, key);
+    } catch (error) {
+      // A value that cannot be stored aborts the transaction, so the other
+      // record is not written either.
+      try {
+        transaction.abort();
+      } catch {
+        // The transaction is already ending.
+      }
+      reject(asError(error, 'The local vault could not be written.'));
+    }
+  });
+}
+
+/**
  * The error of the request that failed.
  *
  * A failed request bubbles its error to the transaction while the transaction
@@ -579,6 +665,11 @@ function requestError(event: Event): Error | null {
 /** The store key of a vault document. The legacy vault keeps its own key. */
 function documentKey(id: string): string {
   return id === LEGACY_VAULT_ID ? DOCUMENT_KEY : `vault:${id}`;
+}
+
+/** The store key of the tab session of a vault. */
+function sessionKey(id: string): string {
+  return `session:${id}`;
 }
 
 /**
@@ -616,6 +707,30 @@ function readVault(document: unknown): Vault {
   const vault = document.vault;
   if (!isVault(vault)) throw new Error('The stored vault document is unreadable.');
   return vault;
+}
+
+/** Unwraps and validates a stored tab session. */
+function readSession(value: unknown): VaultTabSession {
+  if (!isRecord(value)) throw new Error('The stored vault session is unreadable.');
+  if (value.version !== SESSION_VERSION) {
+    throw new Error(`The stored vault session has an unsupported version (${String(value.version)}).`);
+  }
+  const openNoteIds = value.openNoteIds;
+  if (!Array.isArray(openNoteIds) || !openNoteIds.every((id) => typeof id === 'string')) {
+    throw new Error('The stored vault session is unreadable.');
+  }
+  return { version: SESSION_VERSION, openNoteIds: [...openNoteIds] as string[] };
+}
+
+/** Checks a session before it is written, so a broken one never lands. */
+function assertSession(session: VaultTabSession): void {
+  if (!isRecord(session)) throw new Error('The vault session is unreadable.');
+  if (session.version !== SESSION_VERSION) {
+    throw new Error(`The vault session has an unsupported version (${String(session.version)}).`);
+  }
+  if (!Array.isArray(session.openNoteIds) || !session.openNoteIds.every((id) => typeof id === 'string')) {
+    throw new Error('The vault session is unreadable.');
+  }
 }
 
 /** Unwraps and validates the stored catalog. */

@@ -3,11 +3,13 @@ import type { ChangeEvent, RefObject } from 'react';
 
 import { activeNotes } from '../domain/vault';
 import type { LocalGraph } from '../domain/vault';
-import type { Vault } from '../domain/types';
+import type { ViewMode } from '../domain/commands';
+import type { Note, Vault } from '../domain/types';
 import ContextRail from './ContextRail';
 import Editor from './Editor';
 import Explorer from './Explorer';
 import type { FocusTarget } from './Explorer';
+import NoteTabs from './NoteTabs';
 import Preview from './Preview';
 import Search from './Search';
 
@@ -25,9 +27,6 @@ const COMPACT_QUERY = '(max-width: 48rem)';
 export function isHidden(element: Element): boolean {
   return element.closest('[hidden]') !== null;
 }
-
-/** The ways a note can be shown next to the explorer. */
-export type ViewMode = 'write' | 'split' | 'read';
 
 const VIEW_MODES: { value: ViewMode; label: string }[] = [
   { value: 'write', label: 'Write' },
@@ -60,6 +59,17 @@ export interface WorkspaceProps {
   focusContentRequest?: number;
   /** Puts the keyboard on the content the reader can see. */
   focusContent?: () => void;
+  /** The ids of the open notes, in the order of the tab strip. */
+  tabIds: string[];
+  /** Asks the tab strip to put the keyboard on one of its tabs. */
+  tabFocus?: { id: string | null; request: number } | null;
+  /** The way the note is shown next to the explorer. */
+  view: ViewMode;
+  onViewChange(mode: ViewMode): void;
+  /** Counts the requests to fold the context panel away. */
+  contextToggleRequest?: number;
+  /** Tells the app that the screen is narrow or wide. */
+  onCompactChange?: (compact: boolean) => void;
   onOpenVaults(): void;
   onOpenPalette(): void;
   onRetry(): void;
@@ -78,6 +88,10 @@ export interface WorkspaceProps {
   onImport(): void;
   onExport(): void;
   onImportFiles(event: ChangeEvent<HTMLInputElement>): void;
+  /** Opens the note of a tab. */
+  onSelectTab(id: string): void;
+  /** Closes the tab of a note, without deleting the note. */
+  onCloseTab(id: string): void;
 }
 
 /**
@@ -95,13 +109,16 @@ export default function Workspace(props: WorkspaceProps) {
   const notes = activeNotes(props.vault);
   const trashed = props.vault.notes.filter((note) => note.deletedAt !== null);
   const active = notes.find((note) => note.id === props.vault.activeNoteId) ?? null;
+  /** The open notes, in the order of the strip. */
+  const tabNotes = props.tabIds
+    .map((id) => props.vault.notes.find((note) => note.id === id))
+    .filter((note): note is Note => note !== undefined);
 
   const [compact, setCompact] = useState(isCompact);
   const [notesOpen, setNotesOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
-  // The view follows the width of the screen until the user picks one, and
-  // an explicit choice stays for the rest of the session.
-  const [view, setView] = useState<ViewMode>(() => (isCompact() ? 'write' : 'split'));
+  /** Counts the focus requests the workspace makes itself. */
+  const [focusRevision, setFocusRevision] = useState(0);
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
   const notesToggleRef = useRef<HTMLButtonElement>(null);
   const contextToggleRef = useRef<HTMLButtonElement>(null);
@@ -109,6 +126,7 @@ export default function Workspace(props: WorkspaceProps) {
   const filesRef = useRef<HTMLDetailsElement>(null);
   const filesSummaryRef = useRef<HTMLElement>(null);
   const searchPending = useRef(false);
+  const emptyNoteRef = useRef<HTMLButtonElement>(null);
   // The scroll offset of the two panes, one entry per note, so a change of
   // the view or of the note does not move the reader to another place. A ref
   // and not a state, so the typing never re-renders the workspace.
@@ -135,7 +153,14 @@ export default function Workspace(props: WorkspaceProps) {
 
   // The panels follow the width of the window.
   useEffect(() => {
-    const update = () => setCompact(isCompact());
+    const update = () => {
+      const next = isCompact();
+      setCompact(next);
+      // The app needs to know, so a command can say that the context panel
+      // cannot be folded away on a wide screen.
+      props.onCompactChange?.(next);
+    };
+    update();
     window.addEventListener('resize', update);
     const media =
       typeof window.matchMedia === 'function' ? window.matchMedia(COMPACT_QUERY) : null;
@@ -144,7 +169,21 @@ export default function Workspace(props: WorkspaceProps) {
       window.removeEventListener('resize', update);
       media?.removeEventListener('change', update);
     };
-  }, []);
+  }, [props.onCompactChange]);
+
+  // A command asks for the context panel to be folded away, or to come back.
+  useEffect(() => {
+    if (!props.contextToggleRequest) return;
+    setContextOpen((open) => !open);
+  }, [props.contextToggleRequest]);
+
+  // The keyboard follows the note that took the place of a closed tab. When
+  // the last tab closed, the empty panel takes the keyboard instead.
+  useEffect(() => {
+    if (!props.tabFocus) return;
+    if (props.tabFocus.id) return;
+    emptyNoteRef.current?.focus();
+  }, [props.tabFocus]);
 
   // Escape closes the panel that holds the keyboard and gives it back to that
   // panel's toggle.
@@ -211,11 +250,12 @@ export default function Workspace(props: WorkspaceProps) {
   }, [notesExpanded, props.searchRequest, props.searchInputRef]);
 
   // A request to focus the content puts the keyboard on the pane that is on
-  // the screen, so the reader can write at once.
+  // the screen, so the reader can write at once. Creating a note from the
+  // empty panel is such a request: the button that created it is gone.
   useEffect(() => {
-    if (!props.focusContentRequest) return;
+    if (!props.focusContentRequest && !focusRevision) return;
     props.focusContent?.();
-  }, [props.focusContentRequest, props.focusContent]);
+  }, [props.focusContentRequest, focusRevision, props.focusContent]);
 
   /** Closes the files disclosure and gives the keyboard back to its summary. */
   const closeFiles = () => {
@@ -252,7 +292,7 @@ export default function Workspace(props: WorkspaceProps) {
 
   const changeView = (next: ViewMode) => {
     captureScroll();
-    setView(next);
+    props.onViewChange(next);
   };
 
   // The panes report their own place, so the offset of a note belongs to it
@@ -274,7 +314,7 @@ export default function Workspace(props: WorkspaceProps) {
   // where it was. A note that has no offset of its own starts at the top.
   useLayoutEffect(() => {
     restoreScroll();
-  }, [view, noteKey]);
+  }, [props.view, noteKey]);
 
   return (
     <div className="workspace">
@@ -420,7 +460,7 @@ export default function Workspace(props: WorkspaceProps) {
                   type="radio"
                   name="workspace-view"
                   value={mode.value}
-                  checked={view === mode.value}
+                  checked={props.view === mode.value}
                   onChange={() => changeView(mode.value)}
                 />
                 <span>{mode.label}</span>
@@ -428,6 +468,14 @@ export default function Workspace(props: WorkspaceProps) {
             ))}
           </fieldset>
         </header>
+
+        <NoteTabs
+          notes={tabNotes}
+          activeNoteId={props.vault.activeNoteId}
+          onSelect={props.onSelectTab}
+          onClose={props.onCloseTab}
+          focusRequest={props.tabFocus}
+        />
 
         <div className="workspace__statusbar">
           <p className="workspace__status" role="status">
@@ -467,17 +515,41 @@ export default function Workspace(props: WorkspaceProps) {
           </div>
         ) : null}
 
-        <div className="workspace__panes" data-view={view}>
+        {active ? null : (
+          <div className="workspace__empty-note">
+            <p className="workspace__empty-note-text">
+              No note is open. The notes of this vault are still in the list.
+            </p>
+            <button
+              type="button"
+              className="workspace__empty-note-action"
+              ref={emptyNoteRef}
+              onClick={() => {
+                props.onCreate();
+                // The button goes away with the empty panel, so the keyboard
+                // has to move to the note that replaces it.
+                setFocusRevision((revision) => revision + 1);
+              }}
+            >
+              New note
+            </button>
+            <p className="workspace__empty-note-hint">
+              Press Ctrl/Cmd+P to open the quick switcher and pick a note.
+            </p>
+          </div>
+        )}
+
+        <div className="workspace__panes" data-view={props.view} hidden={!active}>
           <Editor
             note={active}
             textareaRef={props.editorRef}
-            hidden={view === 'read'}
+            hidden={props.view === 'read'}
             onChange={props.onChange}
           />
           <Preview
             body={active?.body ?? ''}
             contentRef={props.previewRef}
-            hidden={view === 'write'}
+            hidden={props.view === 'write'}
             onWikiLink={props.onWikiLink}
             existingNames={props.noteNames}
           />
@@ -507,7 +579,7 @@ export default function Workspace(props: WorkspaceProps) {
  * True on a narrow screen. jsdom has no matchMedia, so the width of the
  * window decides there.
  */
-function isCompact(): boolean {
+export function isCompact(): boolean {
   return typeof window.matchMedia === 'function'
     ? window.matchMedia(COMPACT_QUERY).matches
     : window.innerWidth <= 768;

@@ -7,7 +7,7 @@ export interface SearchProps {
   vault: Vault;
   onSelect(noteId: string): void;
   onAnnounce(message: string): void;
-  /** Lets the app focus the field for the Ctrl/Cmd+P shortcut. */
+  /** Lets the app focus the field for the workspace search command. */
   inputRef?: React.RefObject<HTMLInputElement | null>;
 }
 
@@ -61,7 +61,6 @@ export default function Search({ vault, onSelect, onAnnounce, inputRef }: Search
           type="search"
           value={query}
           placeholder="Title or body"
-          aria-keyshortcuts="Control+P Meta+P"
           onChange={(event) => change(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Escape') {

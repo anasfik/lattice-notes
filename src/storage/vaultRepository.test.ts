@@ -10,6 +10,7 @@ import {
   createStoredVault,
   loadCatalog,
   loadVault,
+  loadVaultSession,
   openStoredVault,
   renameStoredVault,
   restoreStoredVault,
@@ -625,5 +626,103 @@ describe('stored vaults', () => {
     await expect(renameStoredVault('', 'name')).rejects.toThrow(/id/i);
     await expect(saveVault(createEmptyVault(), 'bad:id')).rejects.toThrow(/id/i);
     await expect(loadVault('bad:id')).rejects.toThrow(/id/i);
+  });
+});
+
+describe('vault tab sessions', () => {
+  const SESSION_KEY = 'session:current';
+
+  it('resolves null when the vault has no session', async () => {
+    await expect(loadVaultSession('current')).resolves.toBeNull();
+  });
+
+  it('round-trips a session with the vault it belongs to', async () => {
+    const { vault, note } = createNote(createEmptyVault(), 'Roadmap');
+
+    await saveVault(vault, 'current', { version: 1, openNoteIds: [note.id] });
+
+    await expect(loadVaultSession('current')).resolves.toEqual({
+      version: 1,
+      openNoteIds: [note.id],
+    });
+    // The content of the vault is written in the same write.
+    expect((await loadVault('current'))?.notes[0]?.name).toBe('Roadmap');
+  });
+
+  it('keeps the session of one vault apart from the session of another', async () => {
+    const { vault: first, note: firstNote } = createNote(createEmptyVault(), 'First');
+    const created = await createStoredVault('Second', createEmptyVault());
+    const second = created.catalog.activeVaultId;
+
+    await saveVault(first, 'current', { version: 1, openNoteIds: [firstNote.id] });
+    await saveVault(createEmptyVault(), second, { version: 1, openNoteIds: ['other-id'] });
+
+    await expect(loadVaultSession('current')).resolves.toEqual({
+      version: 1,
+      openNoteIds: [firstNote.id],
+    });
+    await expect(loadVaultSession(second)).resolves.toEqual({
+      version: 1,
+      openNoteIds: ['other-id'],
+    });
+  });
+
+  it('rejects a session that is not a versioned list of ids', async () => {
+    await writeRawValue(SESSION_KEY, { version: 1, openNoteIds: [7] });
+    await expect(loadVaultSession('current')).rejects.toThrow(/session/i);
+
+    await writeRawValue(SESSION_KEY, { version: 2, openNoteIds: [] });
+    await expect(loadVaultSession('current')).rejects.toThrow(/session/i);
+
+    await writeRawValue(SESSION_KEY, { version: 1, openNoteIds: 'not-a-list' });
+    await expect(loadVaultSession('current')).rejects.toThrow(/session/i);
+
+    await writeRawValue(SESSION_KEY, 'not-an-object');
+    await expect(loadVaultSession('current')).rejects.toThrow(/session/i);
+  });
+
+  it('rejects an id that cannot address a session key', async () => {
+    await expect(loadVaultSession('')).rejects.toThrow(/id/i);
+    await expect(loadVaultSession('bad id')).rejects.toThrow(/id/i);
+    await expect(loadVaultSession('vault:injected')).rejects.toThrow(/id/i);
+  });
+
+  it('writes neither the vault nor the session when the write transaction is aborted', async () => {
+    const restore = spyOnTransaction((transaction) => {
+      if (transaction.mode !== 'readwrite') return;
+      const store = transaction.objectStore(STORE_NAME);
+      // No request is queued, so the abort is not shadowed by the error event
+      // of a request that is still pending.
+      store.put = (() => ({ onsuccess: null, onerror: null })) as unknown as IDBObjectStore['put'];
+      queueMicrotask(() => transaction.abort());
+    });
+
+    try {
+      await expect(
+        saveVault(createEmptyVault(), 'current', { version: 1, openNoteIds: ['a'] }),
+      ).rejects.toThrow(/abort/i);
+    } finally {
+      restore();
+    }
+
+    expect(await listRawKeys()).toEqual([]);
+  });
+
+  it('rejects a malformed session without writing the vault', async () => {
+    await expect(
+      saveVault(createEmptyVault(), 'current', { version: 2, openNoteIds: [] } as never),
+    ).rejects.toThrow(/session/i);
+
+    expect(await listRawKeys()).toEqual([]);
+  });
+
+  it('keeps the content only save unchanged', async () => {
+    const { vault } = createNote(createEmptyVault(), 'Roadmap');
+
+    await saveVault(vault);
+
+    expect(await readRawValue(DOCUMENT_KEY)).toEqual({ version: 1, vault });
+    expect(await listRawKeys()).toEqual([DOCUMENT_KEY]);
+    await expect(loadVaultSession('current')).resolves.toBeNull();
   });
 });
