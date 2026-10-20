@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import App from './App';
+import { MAX_ENVELOPE_NOTES } from './domain/transfer';
 import { createEmptyVault, createNote, deleteNote } from './domain/vault';
 import type { Vault } from './domain/types';
 import { loadVault, saveVault } from './storage/vaultRepository';
@@ -803,6 +804,47 @@ describe('import and export', () => {
     await waitFor(() => statusText().includes('Imported 1 note'));
     expect(noteNames()).toContain('Big');
   });
+
+  it('imports the admissible notes of an envelope that is far over the note ceiling', async () => {
+    await renderApp();
+    const before = noteNames();
+
+    const entries = Array.from({ length: MAX_ENVELOPE_NOTES + 50_000 }, (_, index) => ({
+      name: `Note ${index}`,
+      body: '',
+    }));
+    const envelope = JSON.stringify({ app: 'lattice-notes', formatVersion: 1, notes: entries });
+
+    await selectFiles(fileInput(), [
+      new File([envelope], 'vault.json', { type: 'application/json' }),
+    ]);
+
+    await waitFor(() => statusText().includes(`Imported ${MAX_ENVELOPE_NOTES} notes`));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(noteNames()).toEqual(expect.arrayContaining(before));
+  }, 60_000);
+
+  it('imports an envelope whose skip list is longer than the argument limit', async () => {
+    await renderApp();
+    const before = noteNames();
+
+    // The skip list is longer than the engine can spread into one call (the
+    // limit is between 100 000 and 150 000 arguments here), so a spread merge
+    // breaks the whole import instead of importing what it may.
+    const entries = Array.from({ length: 200_000 }, (_, index) => ({
+      name: `Note ${index}`,
+      body: '',
+    }));
+    const envelope = JSON.stringify({ app: 'lattice-notes', formatVersion: 1, notes: entries });
+
+    await selectFiles(fileInput(), [
+      new File([envelope], 'vault.json', { type: 'application/json' }),
+    ]);
+
+    await waitFor(() => statusText().includes(`Imported ${MAX_ENVELOPE_NOTES} notes`));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(noteNames()).toEqual(expect.arrayContaining(before));
+  }, 120_000);
 
   it('skips the files beyond the batch limit', async () => {
     await renderApp();

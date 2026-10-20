@@ -79,12 +79,14 @@ announced in the status line, including what was skipped and why:
 | Markdown file size | 1 MiB (1,048,576 bytes) per file | `too large` |
 | Markdown files per selection | 500 | `over the batch limit` |
 | JSON envelope size | 50 MiB (52,428,800 bytes) | `too large` |
+| Notes in a JSON envelope | 20,000 | `over the batch limit` |
 | File type | `.md`, `.markdown`, `.txt`, `.json` | `unsupported type` |
 
-The JSON envelope has its own ceiling and is not subject to the Markdown file
-or batch limits, so a vault with several large notes stays importable. A
-malformed envelope is an error in the warning banner; it changes nothing in the
-vault.
+The JSON envelope has its own ceilings and is not subject to the Markdown file
+or batch limits, so a vault with several large notes stays importable. An
+envelope with more than 20,000 notes imports the notes inside the ceiling and
+reports the rest as `over the batch limit`. A malformed envelope is an error in
+the warning banner; it changes nothing in the vault.
 
 ## The Markdown subset
 

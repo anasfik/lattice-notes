@@ -286,13 +286,13 @@ export default function App() {
           const result = importEnvelope(next, json);
           next = result.vault;
           imported += result.report.imported;
-          skipped.push(...result.report.skipped);
+          mergeSkips(skipped, result.report.skipped);
         }
 
         const result = importMarkdownFiles(next, notes);
         next = result.vault;
         imported += result.report.imported;
-        skipped.push(...result.report.skipped);
+        mergeSkips(skipped, result.report.skipped);
 
         applyVault(next);
       } catch (error) {
@@ -548,6 +548,17 @@ export default function App() {
       />
     </>
   );
+}
+
+/**
+ * Merges a skip list into the summary one entry at a time.
+ *
+ * A spread would put every entry into the argument list of one call, and a
+ * long list (an envelope far over the note ceiling) would overflow it. The
+ * import would then fail instead of importing the notes it may.
+ */
+function mergeSkips(target: ImportSkip[], source: ImportSkip[]): void {
+  for (const entry of source) target.push(entry);
 }
 
 /** The lower case extension of a file name, without the dot. */
