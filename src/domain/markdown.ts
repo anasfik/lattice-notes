@@ -52,8 +52,7 @@ const HEADING = /^(#{1,6})\s+(.*)$/;
 const UNORDERED_ITEM = /^\s*[-*+]\s+(.*)$/;
 const ORDERED_ITEM = /^\s*\d+[.)]\s+(.*)$/;
 const QUOTE = /^\s*>\s?(.*)$/;
-const ORDINARY_LINK = /^\[([^\]]*)\]\(([^)\s]*)\)/;
-const TAG = /^#([A-Za-z][A-Za-z0-9_\/-]*)/;
+const TAG = /#([A-Za-z][A-Za-z0-9_\/-]*)/y;
 const ESCAPABLE = /[\\`*_{}[\]()#+\-.!>~|]/;
 
 export function parseNote(body: string): ParsedNote {
@@ -61,17 +60,26 @@ export function parseNote(body: string): ParsedNote {
   const headings: HeadingInfo[] = [];
   const links: WikiLink[] = [];
   const tags: string[] = [];
+  const seenLinks = new Set<string>();
+  const seenTags = new Set<string>();
 
   for (const block of blocks) {
     if (block.kind === 'heading') headings.push({ level: block.level, text: inlineText(block.inline) });
     for (const node of collectInline(inlineNodesOf(block))) {
       if (node.kind === 'wikiLink') {
-        const known = links.some((link) => link.target === node.target && link.heading === node.heading);
-        if (!known) links.push({ target: node.target, alias: node.alias, heading: node.heading });
+        // Key is target plus heading; the alias does not identify a link.
+        const key = JSON.stringify([node.target, node.heading]);
+        if (!seenLinks.has(key)) {
+          seenLinks.add(key);
+          links.push({ target: node.target, alias: node.alias, heading: node.heading });
+        }
       }
       if (node.kind === 'tag') {
         const tag = node.text.toLowerCase();
-        if (!tags.includes(tag)) tags.push(tag);
+        if (!seenTags.has(tag)) {
+          seenTags.add(tag);
+          tags.push(tag);
+        }
       }
     }
   }
@@ -191,29 +199,44 @@ function parseInline(text: string): InlineNode[] {
   if (text.length > MAX_INLINE_LENGTH) return [{ kind: 'text', text }];
 
   const nodes: InlineNode[] = [];
-  let buffer = '';
   let index = 0;
+  // The pending text is a slice of the source plus any escaped characters
+  // already materialised, so a plain run is copied once instead of character
+  // by character.
+  let runStart = 0;
+  let pending = '';
 
-  const flush = () => {
-    if (buffer) {
-      nodes.push({ kind: 'text', text: buffer });
-      buffer = '';
-    }
+  const flush = (nextStart: number) => {
+    const run = pending + text.slice(runStart, index);
+    if (run) nodes.push({ kind: 'text', text: run });
+    pending = '';
+    runStart = nextStart;
   };
+
+  // Delimiter lookups are cached per run: every search offset only moves
+  // forward, so a hit is reused instead of rescanning the tail.
+  const closeBacktick = nextFinder('`');
+  const closeWiki = nextFinder(']]');
+  const closeStrong = nextFinder('**');
+  const closeStar = nextFinder('*');
+  const closeUnderscore = nextFinder('_');
+  const closeLabel = nextFinder(']');
+  const closeHref = nextFinder(')');
 
   while (index < text.length) {
     const char = text[index] ?? '';
 
     if (char === '\\' && ESCAPABLE.test(text[index + 1] ?? '')) {
-      buffer += text[index + 1] ?? '';
+      pending += text.slice(runStart, index) + (text[index + 1] ?? '');
+      runStart = index + 2;
       index += 2;
       continue;
     }
 
     if (char === '`') {
-      const end = text.indexOf('`', index + 1);
+      const end = closeBacktick(text, index + 1);
       if (end !== -1) {
-        flush();
+        flush(end + 1);
         nodes.push({ kind: 'code', text: text.slice(index + 1, end) });
         index = end + 1;
         continue;
@@ -221,10 +244,10 @@ function parseInline(text: string): InlineNode[] {
     }
 
     if (char === '[' && text[index + 1] === '[') {
-      const end = text.indexOf(']]', index + 2);
+      const end = closeWiki(text, index + 2);
       const link = end === -1 ? null : parseWikiLink(text.slice(index + 2, end));
       if (link) {
-        flush();
+        flush(end + 2);
         nodes.push({ kind: 'wikiLink', ...link });
         index = end + 2;
         continue;
@@ -232,31 +255,41 @@ function parseInline(text: string): InlineNode[] {
     }
 
     if (char === '[') {
-      const match = ORDINARY_LINK.exec(text.slice(index));
-      if (match && isSafeHref(match[2] ?? '')) {
-        flush();
-        nodes.push({ kind: 'link', text: match[1] ?? '', href: match[2] ?? '' });
-        index += match[0].length;
-        continue;
+      // Ordinary link: the label runs to the first "]", the href to the first
+      // ")" and may not hold whitespace.
+      const labelEnd = closeLabel(text, index + 1);
+      if (labelEnd !== -1 && text[labelEnd + 1] === '(') {
+        const hrefEnd = closeHref(text, labelEnd + 2);
+        if (hrefEnd !== -1) {
+          const href = text.slice(labelEnd + 2, hrefEnd);
+          if (!/\s/.test(href) && isSafeHref(href)) {
+            flush(hrefEnd + 1);
+            nodes.push({ kind: 'link', text: text.slice(index + 1, labelEnd), href });
+            index = hrefEnd + 1;
+            continue;
+          }
+        }
       }
     }
 
     if (char === '#' && startsTag(text, index)) {
-      const match = TAG.exec(text.slice(index));
+      TAG.lastIndex = index;
+      const match = TAG.exec(text);
       const tag = (match?.[1] ?? '').replace(/[-/]+$/, '');
       if (tag) {
-        flush();
+        const length = match?.[0].length ?? 0;
+        flush(index + length);
         nodes.push({ kind: 'tag', text: tag });
-        index += (match?.[0].length ?? 0);
+        index += length;
         continue;
       }
     }
 
     if (text.startsWith('**', index)) {
-      const end = text.indexOf('**', index + 2);
+      const end = closeStrong(text, index + 2);
       const content = end === -1 ? '' : text.slice(index + 2, end);
       if (end !== -1 && isInlineContent(content)) {
-        flush();
+        flush(end + 2);
         nodes.push({ kind: 'strong', inline: parseInline(content) });
         index = end + 2;
         continue;
@@ -268,10 +301,10 @@ function parseInline(text: string): InlineNode[] {
       const next = text[index + 1] ?? '';
       const bounded = char === '*' || (!/\w/.test(previous) && !/\w/.test(next));
       if (bounded) {
-        const end = text.indexOf(char, index + 1);
+        const end = char === '*' ? closeStar(text, index + 1) : closeUnderscore(text, index + 1);
         const content = end === -1 ? '' : text.slice(index + 1, end);
         if (end > index + 1 && isInlineContent(content)) {
-          flush();
+          flush(end + 1);
           nodes.push({ kind: 'emphasis', inline: parseInline(content) });
           index = end + 1;
           continue;
@@ -279,12 +312,29 @@ function parseInline(text: string): InlineNode[] {
       }
     }
 
-    buffer += char;
     index += 1;
   }
 
-  flush();
+  flush(text.length);
   return nodes;
+}
+
+/**
+ * Caches the next occurrence of a needle. Search offsets only move forward,
+ * so a cached hit stays the next one and an absent needle stays absent.
+ */
+function nextFinder(needle: string): (text: string, from: number) => number {
+  let searched = false;
+  let at = -1;
+  return (text, from) => {
+    if (searched) {
+      if (at >= from) return at;
+      if (at === -1) return -1;
+    }
+    searched = true;
+    at = text.indexOf(needle, from);
+    return at;
+  };
 }
 
 function parseWikiLink(inner: string): WikiLink | null {

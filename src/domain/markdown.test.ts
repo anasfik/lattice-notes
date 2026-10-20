@@ -120,6 +120,20 @@ describe('parseNote wiki links', () => {
     expect(parsed.links).toEqual([{ target: 'Roadmap', alias: null, heading: null }]);
   });
 
+  it('keeps empty and separator-only wiki targets as literal text', () => {
+    const parsed = parseNote('[[]] and [[|]] and [[#]]');
+
+    expect(parsed.links).toEqual([]);
+    expect(parsed.tags).toEqual([]);
+    expect(parsed.plainText).toBe('[[]] and [[|]] and [[#]]');
+  });
+
+  it('keeps the first alias of a repeated target and heading', () => {
+    const parsed = parseNote('[[Roadmap]] then [[Roadmap|The plan]]');
+
+    expect(parsed.links).toEqual([{ target: 'Roadmap', alias: null, heading: null }]);
+  });
+
   it('reads an alias and an optional heading', () => {
     const parsed = parseNote('[[Roadmap|The plan]] and [[Roadmap#Q3]]');
 
@@ -141,6 +155,12 @@ describe('parseNote tags', () => {
     const parsed = parseNote('Tagged #work/alpha and #Work and #tag.');
 
     expect(parsed.tags).toEqual(['work/alpha', 'work', 'tag']);
+  });
+
+  it('reads slash, dash and underscore tags', () => {
+    const parsed = parseNote('#work/alpha #work-log #work_log');
+
+    expect(parsed.tags).toEqual(['work/alpha', 'work-log', 'work_log']);
   });
 
   it('does not treat headings, code, words, or urls as tags', () => {
@@ -178,6 +198,14 @@ describe('parseNote safety', () => {
       { kind: 'link', text: 'note', href: './other.md' },
     ]);
   });
+
+  it('keeps a link with whitespace in the target as text', () => {
+    const parsed = parseNote('read [docs](https://example.com/a b)');
+    const kinds = allInline(parsed.blocks).map((node) => node.kind);
+
+    expect(kinds).not.toContain('link');
+    expect(parsed.plainText).toBe('read [docs](https://example.com/a b)');
+  });
 });
 
 describe('toPlainText', () => {
@@ -186,4 +214,55 @@ describe('toPlainText', () => {
       'Title\nSome body with code and Link.',
     );
   });
+});
+
+describe('parseNote performance', () => {
+  it('parses a megabyte of unmatched brackets without rescanning the tail', () => {
+    // 55 paragraphs of 19,000 unmatched "[" — the same corpus the import cap
+    // must survive. Each paragraph stays under the 20k inline ceiling, so this
+    // measures the scan, not the fallback.
+    const paragraph = '['.repeat(19_000);
+    const body = Array.from({ length: 55 }, () => paragraph).join('\n\n');
+    expect(body.length).toBe(1_045_108);
+
+    const started = Date.now();
+    const parsed = parseNote(body);
+    const elapsed = Date.now() - started;
+
+    expect(parsed.blocks).toHaveLength(55);
+    for (const block of parsed.blocks) {
+      if (block.kind !== 'paragraph') throw new Error('expected a paragraph block');
+      expect(block.inline).toHaveLength(1);
+      const node = block.inline[0];
+      if (node?.kind !== 'text') throw new Error('expected a single text node');
+      expect(node.text).toBe(paragraph);
+    }
+    expect(parsed.plainText).toBe(Array.from({ length: 55 }, () => paragraph).join('\n'));
+    expect(parsed.links).toEqual([]);
+    expect(parsed.tags).toEqual([]);
+    expect(elapsed).toBeLessThan(1_500);
+  }, 60_000);
+
+  it('dedupes many unique wiki links and tags without a quadratic scan', () => {
+    const count = 10_000;
+    const entries = Array.from({ length: count }, (_, index) => `[[L${index}]] and #T${index}`);
+    const paragraphs: string[] = [];
+    for (let index = 0; index < entries.length; index += 50) {
+      paragraphs.push(entries.slice(index, index + 50).join(' '));
+    }
+    // Keys are spread over paragraphs so no inline run reaches the 20k
+    // fallback; the measured path is the dedupe, not the ceiling.
+    for (const paragraph of paragraphs) expect(paragraph.length).toBeLessThan(20_000);
+    const body = paragraphs.join('\n\n');
+
+    const started = Date.now();
+    const parsed = parseNote(body);
+    const elapsed = Date.now() - started;
+
+    expect(parsed.links.map((link) => link.target)).toEqual(
+      Array.from({ length: count }, (_, index) => `L${index}`),
+    );
+    expect(parsed.tags).toEqual(Array.from({ length: count }, (_, index) => `t${index}`));
+    expect(elapsed).toBeLessThan(1_500);
+  }, 60_000);
 });
