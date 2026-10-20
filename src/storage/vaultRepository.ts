@@ -119,21 +119,40 @@ function openDatabase(): Promise<IDBDatabase> {
       return;
     }
 
+    let settled = false;
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error('The local vault database could not be opened.'));
-    request.onblocked = () => reject(new Error('The local vault database is open in another tab.'));
+    request.onsuccess = () => {
+      // A connection that arrives after the request was rejected must not leak.
+      if (settled) {
+        request.result.close();
+        return;
+      }
+      settled = true;
+      resolve(request.result);
+    };
+    request.onerror = () => {
+      if (settled) return;
+      settled = true;
+      reject(request.error ?? new Error('The local vault database could not be opened.'));
+    };
+    request.onblocked = () => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('The local vault database is open in another tab.'));
+    };
   });
 }
 
 function readDocument(db: IDBDatabase): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(DOCUMENT_KEY);
+    const transaction = db.transaction(STORE_NAME, 'readonly');
+    const request = transaction.objectStore(STORE_NAME).get(DOCUMENT_KEY);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error('The local vault could not be read.'));
+    transaction.onabort = () => reject(transaction.error ?? new Error('The local vault read was aborted.'));
   });
 }
 

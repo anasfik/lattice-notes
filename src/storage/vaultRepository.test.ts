@@ -10,6 +10,34 @@ const DB_NAME = 'lattice-notes';
 const STORE_NAME = 'vault';
 const DOCUMENT_KEY = 'current';
 
+/** Rejects with a timeout instead of hanging when a promise never settles. */
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`The promise did not settle within ${ms}ms.`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Wraps `db.transaction` so a test can interfere with the transaction the
+ * repository creates. Returns a function that restores the original method.
+ */
+function spyOnTransaction(onTransaction: (transaction: IDBTransaction) => void): () => void {
+  const original = IDBDatabase.prototype.transaction;
+  const spy = vi.spyOn(IDBDatabase.prototype, 'transaction');
+  spy.mockImplementation(function (this: IDBDatabase, ...args: unknown[]) {
+    const transaction = (original as unknown as (...rest: unknown[]) => IDBTransaction).apply(this, args);
+    onTransaction(transaction);
+    return transaction;
+  } as unknown as IDBDatabase['transaction']);
+  return () => spy.mockRestore();
+}
+
 async function deleteDatabase(): Promise<void> {
   await new Promise<void>((resolve) => {
     const request = indexedDB.deleteDatabase(DB_NAME);
@@ -146,11 +174,34 @@ describe('vault repository', () => {
     await expect(loadVault()).rejects.toThrow();
   });
 
-  it('rejects when the write fails', async () => {
+  it('rejects when the database cannot be opened for writing', async () => {
     await saveVault(createEmptyVault());
     await dropStore();
 
     await expect(saveVault(createEmptyVault())).rejects.toThrow();
+  });
+
+  it('rejects when the write transaction is aborted', async () => {
+    const restore = spyOnTransaction((transaction) => {
+      if (transaction.mode !== 'readwrite') return;
+      queueMicrotask(() => transaction.abort());
+    });
+
+    try {
+      await expect(saveVault(createEmptyVault())).rejects.toThrow();
+    } finally {
+      restore();
+    }
+  });
+
+  it('keeps the last saved vault when two saves overlap', async () => {
+    const first = createNote(createEmptyVault(), 'First').vault;
+    const second = createNote(createEmptyVault(), 'Second').vault;
+
+    await Promise.all([saveVault(first), saveVault(second)]);
+
+    const loaded = await loadVault();
+    expect(loaded?.notes[0]?.name).toBe('Second');
   });
 
   it('seeds a small vault with one selected note', () => {
@@ -162,5 +213,22 @@ describe('vault repository', () => {
 
     const names = seeded.notes.map((note) => note.name.toLowerCase());
     expect(new Set(names).size).toBe(names.length);
+  });
+
+  // Kept last: while the read never settles, the connection stays open and
+  // would block the database deletion that the next test needs.
+  it('rejects when the read transaction is aborted', async () => {
+    const restore = spyOnTransaction((transaction) => {
+      if (transaction.mode !== 'readonly') return;
+      const store = transaction.objectStore(STORE_NAME);
+      store.get = (() => ({ onsuccess: null, onerror: null })) as unknown as IDBObjectStore['get'];
+      queueMicrotask(() => transaction.abort());
+    });
+
+    try {
+      await expect(withTimeout(loadVault(), 1000)).rejects.toThrow(/abort/i);
+    } finally {
+      restore();
+    }
   });
 });
