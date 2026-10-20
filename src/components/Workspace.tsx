@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, ReactNode, RefObject } from 'react';
 
 import { activeNotes } from '../domain/vault';
@@ -10,10 +11,17 @@ import type { FocusTarget } from './Explorer';
 import Preview from './Preview';
 import Search from './Search';
 
+/** The ids of the two panels that the rail toggles on a narrow screen. */
+const NOTES_PANEL_ID = 'workspace-notes-panel';
+const CONTEXT_PANEL_ID = 'workspace-context-panel';
+const COMPACT_QUERY = '(max-width: 48rem)';
+
 export interface WorkspaceProps {
   vault: Vault;
   status: string;
   error: string | null;
+  /** A failed import, with its own alert and its own dismiss action. */
+  importError: string | null;
   canUndo: boolean;
   focusNote: FocusTarget | null;
   graph: LocalGraph | null;
@@ -23,8 +31,11 @@ export interface WorkspaceProps {
   searchInputRef?: RefObject<HTMLInputElement | null>;
   editorRef?: RefObject<HTMLTextAreaElement | null>;
   fileInputRef?: RefObject<HTMLInputElement | null>;
+  /** Counts the requests to focus the search field, which opens the notes. */
+  searchRequest?: number;
   paletteTrigger?: ReactNode;
   onRetry(): void;
+  onDismissImport(): void;
   onSelect(id: string): void;
   /** Opens a note from a control the navigation replaces. */
   onNavigate(id: string): void;
@@ -43,17 +54,80 @@ export interface WorkspaceProps {
 
 /**
  * The three pane shell: activity rail, explorer, editor with preview, and the
- * context rail. It owns the single polite live region and the persistent
- * storage warning; the app owns the data.
+ * context rail. It owns the single polite live region, the storage warning
+ * and the import alert; the app owns the data.
  *
- * The document order is rail, editor, context, notes, so the compact layout
- * reads from top to bottom and the keyboard never travels backwards. The
- * desktop places the notes list on the left with the grid areas.
+ * The document order is rail, explorer, editor, context, so the desktop
+ * visual order and the document order agree and the keyboard reads the
+ * screen from left to right. On a narrow screen the explorer and the context
+ * rail become explicit panels that the rail toggles, and the editor is the
+ * first content below the rail.
  */
 export default function Workspace(props: WorkspaceProps) {
   const notes = activeNotes(props.vault);
   const trashed = props.vault.notes.filter((note) => note.deletedAt !== null);
   const active = notes.find((note) => note.id === props.vault.activeNoteId) ?? null;
+
+  const [compact, setCompact] = useState(isCompact);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
+  const notesToggleRef = useRef<HTMLButtonElement>(null);
+  const contextToggleRef = useRef<HTMLButtonElement>(null);
+  const searchPending = useRef(false);
+
+  // The panels are always open on a wide screen and closed by default on a
+  // narrow one, where the editor is the primary content.
+  const notesExpanded = !compact || notesOpen;
+  const contextExpanded = !compact || contextOpen;
+
+  // The panels follow the width of the window.
+  useEffect(() => {
+    const update = () => setCompact(isCompact());
+    window.addEventListener('resize', update);
+    const media =
+      typeof window.matchMedia === 'function' ? window.matchMedia(COMPACT_QUERY) : null;
+    media?.addEventListener('change', update);
+    return () => {
+      window.removeEventListener('resize', update);
+      media?.removeEventListener('change', update);
+    };
+  }, []);
+
+  // Escape closes an open panel and gives the keyboard back to its toggle.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      const target = event.target;
+      if (isEditable(target)) return;
+      if (target instanceof Element && target.closest('dialog[open]')) return;
+      if (contextOpen) {
+        setContextOpen(false);
+        contextToggleRef.current?.focus();
+        return;
+      }
+      if (notesOpen) {
+        setNotesOpen(false);
+        notesToggleRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [contextOpen, notesOpen]);
+
+  // A request to focus the search field opens the notes panel first, because
+  // a field inside a closed panel cannot take the focus.
+  useEffect(() => {
+    if (!props.searchRequest) return;
+    searchPending.current = true;
+    setNotesOpen(true);
+  }, [props.searchRequest]);
+
+  useEffect(() => {
+    if (!searchPending.current) return;
+    if (!notesExpanded) return;
+    searchPending.current = false;
+    props.searchInputRef?.current?.focus();
+  }, [notesExpanded, props.searchRequest, props.searchInputRef]);
 
   return (
     <div className="workspace">
@@ -87,48 +161,44 @@ export default function Workspace(props: WorkspaceProps) {
         >
           Export
         </button>
+        <button
+          type="button"
+          className="workspace__rail-action workspace__panel-toggle"
+          ref={notesToggleRef}
+          aria-expanded={notesExpanded}
+          aria-controls={NOTES_PANEL_ID}
+          onClick={() => setNotesOpen((open) => !open)}
+        >
+          Notes
+        </button>
+        <button
+          type="button"
+          className="workspace__rail-action workspace__panel-toggle"
+          ref={contextToggleRef}
+          aria-expanded={contextExpanded}
+          aria-controls={CONTEXT_PANEL_ID}
+          onClick={() => setContextOpen((open) => !open)}
+        >
+          Context
+        </button>
         <input
           ref={props.fileInputRef}
           type="file"
           multiple
           accept=".md,.markdown,.txt,.json"
           className="workspace__file-input"
+          tabIndex={-1}
+          aria-label="Markdown or vault export files"
           onChange={props.onImportFiles}
         />
       </nav>
 
-      <main className="workspace__main" aria-label="Note workspace">
-        <div className="workspace__statusbar">
-          <p className="workspace__status" role="status">
-            {props.status}
-          </p>
-          {props.canUndo ? (
-            <button type="button" className="workspace__undo" onClick={props.onUndo}>
-              Undo delete
-            </button>
-          ) : null}
-        </div>
-
-        {props.error ? (
-          <div className="workspace__warning" role="alert">
-            <p className="workspace__warning-text">{props.error}</p>
-            <button type="button" className="workspace__warning-action" onClick={props.onRetry}>
-              Retry
-            </button>
-          </div>
-        ) : null}
-
-        <div className="workspace__panes">
-          <Editor note={active} textareaRef={props.editorRef} onChange={props.onChange} />
-          <Preview
-            body={active?.body ?? ''}
-            onWikiLink={props.onWikiLink}
-            existingNames={props.noteNames}
-          />
-        </div>
-      </main>
-
-      <aside className="workspace__explorer" aria-label="Notes">
+      <aside
+        className="workspace__explorer"
+        aria-label="Notes"
+        id={NOTES_PANEL_ID}
+        hidden={!notesExpanded}
+      >
         <Explorer
           notes={notes}
           trashed={trashed}
@@ -151,7 +221,54 @@ export default function Workspace(props: WorkspaceProps) {
         />
       </aside>
 
-      <aside className="workspace__context" aria-label="Context">
+      <main className="workspace__main" aria-label="Note workspace">
+        <div className="workspace__statusbar">
+          <p className="workspace__status" role="status">
+            {props.status}
+          </p>
+          {props.canUndo ? (
+            <button type="button" className="workspace__undo" onClick={props.onUndo}>
+              Undo delete
+            </button>
+          ) : null}
+        </div>
+
+        {props.importError ? (
+          <div className="workspace__warning" role="alert">
+            <p className="workspace__warning-text">{props.importError}</p>
+            <button
+              type="button"
+              className="workspace__warning-action"
+              onClick={props.onDismissImport}
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : props.error ? (
+          <div className="workspace__warning" role="alert">
+            <p className="workspace__warning-text">{props.error}</p>
+            <button type="button" className="workspace__warning-action" onClick={props.onRetry}>
+              Retry
+            </button>
+          </div>
+        ) : null}
+
+        <div className="workspace__panes">
+          <Editor note={active} textareaRef={props.editorRef} onChange={props.onChange} />
+          <Preview
+            body={active?.body ?? ''}
+            onWikiLink={props.onWikiLink}
+            existingNames={props.noteNames}
+          />
+        </div>
+      </main>
+
+      <aside
+        className="workspace__context"
+        aria-label="Context"
+        id={CONTEXT_PANEL_ID}
+        hidden={!contextExpanded}
+      >
         <ContextRail
           note={active}
           graph={props.graph}
@@ -163,5 +280,25 @@ export default function Workspace(props: WorkspaceProps) {
         />
       </aside>
     </div>
+  );
+}
+
+/**
+ * True on a narrow screen. jsdom has no matchMedia, so the width of the
+ * window decides there.
+ */
+function isCompact(): boolean {
+  return typeof window.matchMedia === 'function'
+    ? window.matchMedia(COMPACT_QUERY).matches
+    : window.innerWidth <= 768;
+}
+
+/** True for a field the keyboard is typing into. */
+function isEditable(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target.isContentEditable
   );
 }

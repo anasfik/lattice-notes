@@ -58,6 +58,8 @@ export default function App() {
   const [undo, setUndo] = useState<{ id: string; name: string } | null>(null);
   const [focusNote, setFocusNote] = useState<FocusTarget | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [searchRequest, setSearchRequest] = useState(0);
 
   const vaultRef = useRef(vault);
   const baseRef = useRef<Vault | null>(null);
@@ -221,6 +223,7 @@ export default function App() {
       const input = event.target;
       const files = Array.from(input.files ?? []);
       input.value = '';
+      setImportError(null);
       if (files.length === 0) return;
 
       const skipped: ImportSkip[] = [];
@@ -252,34 +255,43 @@ export default function App() {
         markdown.push(file);
       }
 
-      const notes = await Promise.all(
-        markdown.map(async (file) => ({ name: stripExtension(file.name), text: await file.text() })),
-      );
-      const envelopesText = await Promise.all(envelopes.map(async (file) => await file.text()));
-
-      // The merge runs against the vault of this moment, not against a vault
-      // captured before the files were read.
-      let next = vaultRef.current;
       let imported = 0;
 
       try {
+        // The files are read one after the other, so a large selection does
+        // not hold the text of every file in memory at once.
+        const notes: { name: string; text: string }[] = [];
+        for (const file of markdown) {
+          notes.push({ name: stripExtension(file.name), text: await file.text() });
+        }
+        const envelopesText: string[] = [];
+        for (const file of envelopes) {
+          envelopesText.push(await file.text());
+        }
+
+        // The merge runs against the vault of this moment, not against a vault
+        // captured before the files were read.
+        let next = vaultRef.current;
         for (const json of envelopesText) {
           const result = importEnvelope(next, json);
           next = result.vault;
           imported += result.report.imported;
           skipped.push(...result.report.skipped);
         }
+
+        const result = importMarkdownFiles(next, notes);
+        next = result.vault;
+        imported += result.report.imported;
+        skipped.push(...result.report.skipped);
+
+        applyVault(next);
       } catch (error) {
-        // A broken envelope changes nothing: every note of the vault stays.
-        setError(`The import failed: ${errorMessage(error)}`);
+        // A broken file or envelope changes nothing: every note of the vault
+        // stays, and the reason is in the import alert.
+        setImportError(`The import failed: ${errorMessage(error)}`);
         return;
       }
 
-      const result = importMarkdownFiles(next, notes);
-      imported += result.report.imported;
-      skipped.push(...result.report.skipped);
-
-      applyVault(result.vault);
       setStatus(describeImport(imported, skipped));
     },
     [applyVault],
@@ -293,7 +305,11 @@ export default function App() {
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = 'lattice-notes-vault.json';
+    // The anchor has to be in the document when it is clicked, or some
+    // browsers ignore the download.
+    document.body.append(anchor);
     anchor.click();
+    anchor.remove();
     // The download reads the object URL after the click, so the URL is
     // released on the next tick and not before.
     setTimeout(() => URL.revokeObjectURL(url), 0);
@@ -324,6 +340,14 @@ export default function App() {
 
   const announce = useCallback((message: string) => {
     setStatus(message);
+  }, []);
+
+  /**
+   * Asks for the search field. The workspace opens the notes panel first when
+   * the search field sits inside a closed panel.
+   */
+  const requestSearch = useCallback(() => {
+    setSearchRequest((request) => request + 1);
   }, []);
 
   const handleRetry = useCallback(async () => {
@@ -373,7 +397,11 @@ export default function App() {
       }
       if (baseRef.current !== vaultRef.current) {
         setRetryKind('save');
-        setError('Local storage is readable again. Retry saves the notes of this tab, replacing the stored vault.');
+        // The next retry re-reads the store and refuses to write over a
+        // vault that is readable, so the message must not promise a save.
+        setError(
+          'Local storage is readable again. Export the notes of this tab, then reload the page to use the stored vault.',
+        );
         return;
       }
       applyVault(stored);
@@ -418,12 +446,12 @@ export default function App() {
       }
       if (key === 'p') {
         event.preventDefault();
-        searchInputRef.current?.focus();
+        requestSearch();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [requestSearch]);
 
   // The graph parses every body, so it follows the vault at background
   // priority instead of on every keystroke.
@@ -453,6 +481,7 @@ export default function App() {
         vault={vault}
         status={status}
         error={error}
+        importError={importError}
         canUndo={undo !== null}
         focusNote={focusNote}
         graph={graph}
@@ -460,6 +489,7 @@ export default function App() {
         graphPending={graphPending}
         searchInputRef={searchInputRef}
         editorRef={editorRef}
+        searchRequest={searchRequest}
         paletteTrigger={
           <button
             type="button"
@@ -474,6 +504,7 @@ export default function App() {
         onRetry={() => {
           void handleRetry();
         }}
+        onDismissImport={() => setImportError(null)}
         onSelect={handleSelect}
         onNavigate={handleNavigate}
         onCreate={handleCreate}
@@ -495,7 +526,7 @@ export default function App() {
         onClose={() => setPaletteOpen(false)}
         onSelect={handleSelect}
         onCreate={handleCreate}
-        onFocusSearch={() => searchInputRef.current?.focus()}
+        onFocusSearch={requestSearch}
         onAnnounce={announce}
       />
     </>
@@ -518,10 +549,13 @@ function stripExtension(name: string): string {
 function describeImport(imported: number, skipped: ImportSkip[]): string {
   const parts = [`Imported ${imported} ${imported === 1 ? 'note' : 'notes'}`];
   if (skipped.length > 0) {
-    const list = skipped
-      .map((entry) => `${entry.name} (${SKIP_REASONS[entry.reason]})`)
-      .join(', ');
-    parts.push(`skipped ${skipped.length}: ${list}`);
+    // The live region is read out loud, so the list stays short.
+    const shown = skipped
+      .slice(0, 5)
+      .map((entry) => `${entry.name} (${SKIP_REASONS[entry.reason]})`);
+    const rest = skipped.length - shown.length;
+    if (rest > 0) shown.push(`and ${rest} more`);
+    parts.push(`skipped ${skipped.length}: ${shown.join(', ')}`);
   }
   return parts.join(', ');
 }

@@ -32,6 +32,8 @@ if (typeof dialogProto.showModal !== 'function') {
 const DB_NAME = 'lattice-notes';
 const STORE_NAME = 'vault';
 const DOCUMENT_KEY = 'current';
+/** The width jsdom starts with; the compact layout starts below 768. */
+const INITIAL_WIDTH = window.innerWidth;
 
 let container: HTMLDivElement;
 let root: Root;
@@ -279,6 +281,7 @@ beforeEach(async () => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
+  window.innerWidth = INITIAL_WIDTH;
   await deleteDatabase();
 });
 
@@ -509,7 +512,7 @@ describe('workspace shell', () => {
     expect(body?.textContent).toContain('Nothing to preview yet');
   });
 
-  it('keeps the document order in step with the compact screen order', async () => {
+  it('keeps the document order in step with the reading order', async () => {
     await renderApp();
 
     const order = Array.from(container.querySelector('.workspace')?.children ?? []).map(
@@ -518,8 +521,8 @@ describe('workspace shell', () => {
 
     expect(order).toEqual([
       'workspace__rail',
-      'workspace__main',
       'workspace__explorer',
+      'workspace__main',
       'workspace__context',
     ]);
   });
@@ -633,6 +636,7 @@ describe('import and export', () => {
 
     const blobs: Blob[] = [];
     const revoked: string[] = [];
+    let connected = false;
     const originalCreate = URL.createObjectURL;
     const originalRevoke = URL.revokeObjectURL;
     Object.defineProperty(URL, 'createObjectURL', {
@@ -648,7 +652,11 @@ describe('import and export', () => {
         revoked.push(url);
       },
     });
-    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        connected = this.isConnected;
+      });
 
     try {
       await click(buttonByName('Export vault'));
@@ -665,6 +673,8 @@ describe('import and export', () => {
       expect(anchorClick).toHaveBeenCalledTimes(1);
       const anchor = anchorClick.mock.instances[0] as HTMLAnchorElement;
       expect(anchor.download).toBe('lattice-notes-vault.json');
+      // The anchor has to be in the document when it is clicked.
+      expect(connected).toBe(true);
 
       await waitFor(() => revoked.length === 1);
       expect(revoked).toEqual(['blob:lattice-notes/vault']);
@@ -682,6 +692,163 @@ describe('import and export', () => {
 
     expect(alertText()).toContain('Local storage');
     expect(buttonByName('Export vault')).not.toBeNull();
+  });
+
+  it('clears the import alert when a later import succeeds', async () => {
+    await renderApp();
+
+    await selectFiles(fileInput(), [
+      new File(['not json at all'], 'vault.json', { type: 'application/json' }),
+    ]);
+
+    expect(alertText()).toContain('import failed');
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
+
+    await selectFiles(fileInput(), [
+      new File(['# imported body'], 'notes.md', { type: 'text/markdown' }),
+    ]);
+
+    await waitFor(() => statusText().includes('Imported 1 note'));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('reports a file that cannot be read and leaves the vault unchanged', async () => {
+    await renderApp();
+    const before = noteNames();
+
+    await selectFiles(fileInput(), [
+      { name: 'x.md', size: 1, text: () => Promise.reject(new Error('gone')) },
+    ]);
+
+    await waitFor(() => alertText().includes('import failed'));
+    expect(noteNames()).toEqual(before);
+  });
+
+  it('names at most five skipped files in the status line', async () => {
+    await renderApp();
+
+    const files = Array.from(
+      { length: 10 },
+      (_, index) => new File(['x'], `file-${index}.pdf`, { type: 'application/pdf' }),
+    );
+    await selectFiles(fileInput(), files);
+
+    expect(statusText()).toContain('file-0.pdf');
+    expect(statusText()).toContain('and 5 more');
+    expect(statusText()).not.toContain('file-9.pdf');
+  });
+
+  it('imports a vault envelope that is larger than the Markdown file limit', async () => {
+    await renderApp();
+
+    const envelope = JSON.stringify({
+      app: 'lattice-notes',
+      formatVersion: 1,
+      notes: [{ name: 'Big', body: 'x'.repeat(1_200_000) }],
+    });
+    await selectFiles(fileInput(), [
+      new File([envelope], 'vault.json', { type: 'application/json' }),
+    ]);
+
+    await waitFor(() => statusText().includes('Imported 1 note'));
+    expect(noteNames()).toContain('Big');
+  });
+
+  it('skips the files beyond the batch limit', async () => {
+    await renderApp();
+
+    const files = Array.from({ length: 501 }, (_, index) => ({
+      name: `note-${index}.md`,
+      size: 4,
+      text: async () => `# note ${index}`,
+    }));
+    await selectFiles(fileInput(), files);
+
+    await waitFor(() => statusText().includes('over the batch limit'));
+    expect(noteNames()).toContain('note-0');
+    expect(noteNames()).not.toContain('note-500');
+  });
+});
+
+describe('compact panels', () => {
+  it('turns the notes and the context into panels on a narrow screen', async () => {
+    window.innerWidth = 390;
+    await renderApp();
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    const toggles = queryAll<HTMLButtonElement>('.workspace__panel-toggle');
+    expect(toggles).toHaveLength(2);
+    const [notesToggle, contextToggle] = toggles;
+    expect(notesToggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(contextToggle?.getAttribute('aria-expanded')).toBe('false');
+
+    const notesPanel = document.getElementById(notesToggle?.getAttribute('aria-controls') ?? '');
+    const contextPanel = document.getElementById(contextToggle?.getAttribute('aria-controls') ?? '');
+    expect(notesPanel).not.toBeNull();
+    expect(contextPanel).not.toBeNull();
+    expect(notesPanel?.hasAttribute('hidden')).toBe(true);
+    expect(contextPanel?.hasAttribute('hidden')).toBe(true);
+
+    notesToggle?.focus();
+    await click(notesToggle as Element);
+
+    expect(notesToggle?.getAttribute('aria-expanded')).toBe('true');
+    expect(notesPanel?.hasAttribute('hidden')).toBe(false);
+    expect(document.activeElement).toBe(notesToggle);
+
+    await pressKey(notesPanel as Element, 'Escape');
+
+    expect(notesToggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(notesPanel?.hasAttribute('hidden')).toBe(true);
+    expect(document.activeElement).toBe(notesToggle);
+  });
+
+  it('keeps both panes visible on a wide screen', async () => {
+    window.innerWidth = 1280;
+    await renderApp();
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(false);
+    expect(container.querySelector('.workspace__context')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('keeps an open panel open when Escape comes from a field', async () => {
+    window.innerWidth = 390;
+    await renderApp();
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    await click(queryAll<HTMLButtonElement>('.workspace__panel-toggle')[0] as Element);
+    const input = searchInput();
+
+    await pressKey(input, 'Escape');
+
+    expect(queryAll<HTMLButtonElement>('.workspace__panel-toggle')[0]?.getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('opens the notes panel for a search request on a narrow screen', async () => {
+    window.innerWidth = 390;
+    await renderApp();
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+
+    await waitFor(() => document.activeElement === searchInput());
+    expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(false);
   });
 });
 
@@ -818,6 +985,29 @@ describe('unreadable storage', () => {
     await waitFor(() => alertText().includes('readable again'));
     const stored = await readRawDocument();
     expect(stored.version).toBe(1);
+    expect(stored.vault.notes.map((note) => note.name)).toEqual(['Recovered note']);
+  });
+
+  it('does not promise a save when the stored vault becomes readable before the retry', async () => {
+    await storeUnreadableDocument();
+
+    await renderApp();
+    await click(buttonByName('Create first note'));
+
+    // The stored document becomes readable before the first retry, so the
+    // retry takes the load branch.
+    const recovered = createNote(createEmptyVault(), 'Recovered note');
+    await writeRawDocument({ version: 1, vault: recovered.vault });
+
+    await click(buttonByName('Retry'));
+
+    await waitFor(() => alertText().includes('readable again'));
+    expect(alertText()).not.toContain('Retry saves');
+    expect(alertText()).toContain('Export the notes of this tab');
+
+    await click(buttonByName('Retry'));
+
+    const stored = await readRawDocument();
     expect(stored.vault.notes.map((note) => note.name)).toEqual(['Recovered note']);
   });
 });

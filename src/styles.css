@@ -219,8 +219,19 @@ a {
   cursor: pointer;
 }
 
-/* The file picker lives behind the visible import control. */
+/* The file picker lives behind the visible import control. It stays in the
+   layout, so a browser that refuses a picker on a hidden input still opens
+   it, but it is never seen and never a tab stop. */
 .workspace__file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The panel toggles belong to the narrow layout only. */
+.workspace__panel-toggle {
   display: none;
 }
 
@@ -308,6 +319,12 @@ a {
   background: var(--color-surface);
   border-left: var(--border-width) solid var(--color-border);
   overflow: auto;
+}
+
+/* A closed panel is really closed, whatever the component display rule says. */
+.workspace__explorer[hidden],
+.workspace__context[hidden] {
+  display: none;
 }
 
 /* Explorer ---------------------------------------------------------------- */
@@ -1007,7 +1024,7 @@ a {
 @media (max-width: 48rem) {
   .workspace {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: 'rail' 'main' 'explorer' 'context';
+    grid-template-areas: 'rail' 'explorer' 'main' 'context';
     height: auto;
     min-height: 100dvh;
   }
@@ -1018,6 +1035,10 @@ a {
     padding: var(--space-2) var(--space-3);
     border-right: 0;
     border-bottom: var(--border-width) solid var(--color-border);
+  }
+
+  .workspace__panel-toggle {
+    display: grid;
   }
 
   .workspace__main {

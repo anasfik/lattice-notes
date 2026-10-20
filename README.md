@@ -131,9 +131,9 @@ two markers and writes `dist/sw.js`:
   overwrite the changes of the first tab. Use one tab at a time.
 - **The last keystroke can be lost.** Writes are debounced by 200 ms. Closing
   the tab immediately after a keystroke can lose that keystroke.
-- **The recovery path refuses to guess.** When the stored document cannot be
-  read, a retry never overwrites it silently: the app asks for the notes of
-  the tab to be exported first.
+- **The recovery path refuses to guess.** A retry re-reads the stored vault: it
+  refuses to write over a vault that has become readable, and only replaces a
+  still unreadable one after a second, explicitly warned retry.
 
 ## Reference material
 
