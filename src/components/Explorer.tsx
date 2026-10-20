@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import type { Note } from '../domain/types';
 
@@ -8,6 +8,8 @@ export interface ExplorerProps {
   activeNoteId: string | null;
   /** Set by the app after a restore so the keyboard keeps its place. */
   focusNote: { id: string } | null;
+  /** Controls that belong above the note list, such as the search field. */
+  tools?: ReactNode;
   onSelect(id: string): void;
   onCreate(): void;
   onRename(id: string, name: string): void;
@@ -21,6 +23,7 @@ export default function Explorer({
   trashed,
   activeNoteId,
   focusNote,
+  tools,
   onSelect,
   onCreate,
   onRename,
@@ -73,6 +76,8 @@ export default function Explorer({
         <h2 className="explorer__title">Notes</h2>
         <span className="explorer__count">{notes.length}</span>
       </header>
+
+      {tools}
 
       {notes.length === 0 ? (
         <div className="explorer__empty">

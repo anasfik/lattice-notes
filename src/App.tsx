@@ -6,10 +6,11 @@
  * rewriting the data flow.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   activeNotes,
+  buildLocalGraph,
   createEmptyVault,
   createNote,
   deleteNote,
@@ -20,6 +21,7 @@ import {
 } from './domain/vault';
 import type { Vault } from './domain/types';
 import { createSeedVault, loadVault, saveVault } from './storage/vaultRepository';
+import CommandPalette from './components/CommandPalette';
 import Workspace from './components/Workspace';
 
 const SAVE_DEBOUNCE_MS = 200;
@@ -34,12 +36,15 @@ export default function App() {
   const [retryKind, setRetryKind] = useState<'load' | 'save'>('load');
   const [undo, setUndo] = useState<{ id: string; name: string } | null>(null);
   const [focusNote, setFocusNote] = useState<{ id: string } | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   const vaultRef = useRef(vault);
   const baseRef = useRef<Vault | null>(null);
   const saveSeq = useRef(0);
   const bootedRef = useRef(false);
   const loadFailures = useRef(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
 
   /** Applies the next vault to the state and to the ref the handlers read. */
   const applyVault = useCallback((next: Vault) => {
@@ -117,6 +122,9 @@ export default function App() {
     if (!note) return;
     if (current.activeNoteId !== id) applyVault({ ...current, activeNoteId: id });
     setStatus(`Opened ${note.name}`);
+    // A navigation replaces the control that was used, so the keyboard goes
+    // to the note it opened.
+    editorRef.current?.focus();
   }, [applyVault]);
 
   const handleChange = useCallback((body: string) => {
@@ -163,16 +171,27 @@ export default function App() {
 
   const handleWikiLink = useCallback(
     (target: string) => {
-      const wanted = normalizeNoteName(target).toLowerCase();
-      const match = activeNotes(vaultRef.current).find((note) => note.name.toLowerCase() === wanted);
-      if (!match) {
-        setStatus(`No note named ${target} yet`);
+      const wanted = normalizeNoteName(target);
+      if (!wanted) return;
+      const match = activeNotes(vaultRef.current).find(
+        (note) => note.name.toLowerCase() === wanted.toLowerCase(),
+      );
+      if (match) {
+        handleSelect(match.id);
         return;
       }
-      handleSelect(match.id);
+      // A missing target becomes the note it names, once.
+      const { vault: next, note } = createNote(vaultRef.current, wanted);
+      applyVault({ ...next, activeNoteId: note.id });
+      setStatus(`Created ${note.name}`);
+      editorRef.current?.focus();
     },
-    [handleSelect],
+    [applyVault, handleSelect],
   );
+
+  const announce = useCallback((message: string) => {
+    setStatus(message);
+  }, []);
 
   const handleRetry = useCallback(async () => {
     if (retryKind === 'save') {
@@ -221,6 +240,38 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [handleCreate]);
 
+  // The palette and the search field are reachable from anywhere, including
+  // from the editor.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.repeat) return;
+      const key = event.key.toLowerCase();
+      if (key === 'k') {
+        event.preventDefault();
+        setPaletteOpen(true);
+        return;
+      }
+      if (key === 'p') {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  // The graph parses every body, so it follows the vault at background
+  // priority instead of on every keystroke.
+  const deferredVault = useDeferredValue(vault);
+  const graph = useMemo(
+    () => buildLocalGraph(deferredVault, deferredVault.activeNoteId ?? ''),
+    [deferredVault],
+  );
+  const noteNames = useMemo(
+    () => new Set(activeNotes(vault).map((note) => normalizeNoteName(note.name).toLowerCase())),
+    [vault],
+  );
+
   if (mode === 'loading') {
     return (
       <main className="workspace-loading" aria-label="Opening the local vault">
@@ -230,23 +281,50 @@ export default function App() {
   }
 
   return (
-    <Workspace
-      vault={vault}
-      status={status}
-      error={error}
-      canUndo={undo !== null}
-      focusNote={focusNote}
-      onRetry={() => {
-        void handleRetry();
-      }}
-      onSelect={handleSelect}
-      onCreate={handleCreate}
-      onRename={handleRename}
-      onDelete={handleDelete}
-      onRestore={handleRestore}
-      onChange={handleChange}
-      onUndo={handleUndo}
-      onWikiLink={handleWikiLink}
-    />
+    <>
+      <Workspace
+        vault={vault}
+        status={status}
+        error={error}
+        canUndo={undo !== null}
+        focusNote={focusNote}
+        graph={graph}
+        noteNames={noteNames}
+        searchInputRef={searchInputRef}
+        editorRef={editorRef}
+        paletteTrigger={
+          <button
+            type="button"
+            className="search__action"
+            aria-haspopup="dialog"
+            aria-keyshortcuts="Control+K Meta+K"
+            onClick={() => setPaletteOpen(true)}
+          >
+            Commands
+          </button>
+        }
+        onRetry={() => {
+          void handleRetry();
+        }}
+        onSelect={handleSelect}
+        onCreate={handleCreate}
+        onRename={handleRename}
+        onDelete={handleDelete}
+        onRestore={handleRestore}
+        onChange={handleChange}
+        onUndo={handleUndo}
+        onWikiLink={handleWikiLink}
+        onAnnounce={announce}
+      />
+      <CommandPalette
+        open={paletteOpen}
+        vault={vault}
+        onClose={() => setPaletteOpen(false)}
+        onSelect={handleSelect}
+        onCreate={handleCreate}
+        onFocusSearch={() => searchInputRef.current?.focus()}
+        onAnnounce={announce}
+      />
+    </>
   );
 }

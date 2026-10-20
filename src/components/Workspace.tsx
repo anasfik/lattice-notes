@@ -1,9 +1,13 @@
+import type { ReactNode, RefObject } from 'react';
+
 import { activeNotes } from '../domain/vault';
+import type { LocalGraph } from '../domain/vault';
 import type { Vault } from '../domain/types';
 import ContextRail from './ContextRail';
 import Editor from './Editor';
 import Explorer from './Explorer';
 import Preview from './Preview';
+import Search from './Search';
 
 export interface WorkspaceProps {
   vault: Vault;
@@ -11,6 +15,11 @@ export interface WorkspaceProps {
   error: string | null;
   canUndo: boolean;
   focusNote: { id: string } | null;
+  graph: LocalGraph | null;
+  noteNames: ReadonlySet<string>;
+  searchInputRef?: RefObject<HTMLInputElement | null>;
+  editorRef?: RefObject<HTMLTextAreaElement | null>;
+  paletteTrigger?: ReactNode;
   onRetry(): void;
   onSelect(id: string): void;
   onCreate(): void;
@@ -20,6 +29,7 @@ export interface WorkspaceProps {
   onChange(body: string): void;
   onUndo(): void;
   onWikiLink(target: string): void;
+  onAnnounce(message: string): void;
 }
 
 /**
@@ -59,6 +69,15 @@ export default function Workspace(props: WorkspaceProps) {
           onRename={props.onRename}
           onDelete={props.onDelete}
           onRestore={props.onRestore}
+          tools={
+            <Search
+              vault={props.vault}
+              onSelect={props.onSelect}
+              onAnnounce={props.onAnnounce}
+              inputRef={props.searchInputRef}
+              action={props.paletteTrigger}
+            />
+          }
         />
       </aside>
 
@@ -84,13 +103,23 @@ export default function Workspace(props: WorkspaceProps) {
         ) : null}
 
         <div className="workspace__panes">
-          <Editor note={active} onChange={props.onChange} />
-          <Preview body={active?.body ?? ''} onWikiLink={props.onWikiLink} />
+          <Editor note={active} textareaRef={props.editorRef} onChange={props.onChange} />
+          <Preview
+            body={active?.body ?? ''}
+            onWikiLink={props.onWikiLink}
+            existingNames={props.noteNames}
+          />
         </div>
       </main>
 
       <aside className="workspace__context" aria-label="Context">
-        <ContextRail note={active} />
+        <ContextRail
+          note={active}
+          graph={props.graph}
+          noteNames={props.noteNames}
+          onSelect={props.onSelect}
+          onWikiLink={props.onWikiLink}
+        />
       </aside>
     </div>
   );

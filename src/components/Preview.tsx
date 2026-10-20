@@ -2,10 +2,18 @@ import { Fragment, type ReactNode } from 'react';
 
 import { parseNote } from '../domain/markdown';
 import type { BlockNode, InlineNode } from '../domain/markdown';
+import { normalizeNoteName } from '../domain/vault';
 
 export interface PreviewProps {
   body: string;
   onWikiLink(target: string): void;
+  /** Lower cased names of the active notes, so a missing target can say so. */
+  existingNames?: ReadonlySet<string>;
+}
+
+interface RenderContext {
+  onWikiLink(target: string): void;
+  existingNames?: ReadonlySet<string>;
 }
 
 /**
@@ -13,10 +21,12 @@ export interface PreviewProps {
  *
  * The parser never produces HTML, so nothing here can execute imported
  * markup. Ordinary links become anchors with the vetted href, wiki links
- * become buttons that ask the app to select a note.
+ * become buttons that ask the app to select a note. A wiki link without a
+ * target names the note it would create, so the outcome is never a surprise.
  */
-export default function Preview({ body, onWikiLink }: PreviewProps) {
+export default function Preview({ body, onWikiLink, existingNames }: PreviewProps) {
   const parsed = parseNote(body);
+  const context: RenderContext = { onWikiLink, existingNames };
 
   return (
     <section className="preview" aria-labelledby="preview-title">
@@ -24,16 +34,16 @@ export default function Preview({ body, onWikiLink }: PreviewProps) {
         Preview
       </h2>
       <div className="preview__body">
-        {parsed.blocks.map((block, index) => renderBlock(block, index, onWikiLink))}
+        {parsed.blocks.map((block, index) => renderBlock(block, index, context))}
       </div>
     </section>
   );
 }
 
-function renderBlock(block: BlockNode, key: number, onWikiLink: (target: string) => void): ReactNode {
+function renderBlock(block: BlockNode, key: number, context: RenderContext): ReactNode {
   switch (block.kind) {
     case 'heading': {
-      const content = renderInline(block.inline, onWikiLink);
+      const content = renderInline(block.inline, context);
       switch (block.level) {
         case 1:
           return <h2 key={key}>{content}</h2>;
@@ -48,20 +58,20 @@ function renderBlock(block: BlockNode, key: number, onWikiLink: (target: string)
       }
     }
     case 'paragraph':
-      return <p key={key}>{renderInline(block.inline, onWikiLink)}</p>;
+      return <p key={key}>{renderInline(block.inline, context)}</p>;
     case 'quote':
-      return <blockquote key={key}>{renderInline(block.inline, onWikiLink)}</blockquote>;
+      return <blockquote key={key}>{renderInline(block.inline, context)}</blockquote>;
     case 'list':
       return block.ordered ? (
         <ol key={key} role="list">
           {block.items.map((item, index) => (
-            <li key={index}>{renderInline(item, onWikiLink)}</li>
+            <li key={index}>{renderInline(item, context)}</li>
           ))}
         </ol>
       ) : (
         <ul key={key} role="list">
           {block.items.map((item, index) => (
-            <li key={index}>{renderInline(item, onWikiLink)}</li>
+            <li key={index}>{renderInline(item, context)}</li>
           ))}
         </ul>
       );
@@ -74,28 +84,34 @@ function renderBlock(block: BlockNode, key: number, onWikiLink: (target: string)
   }
 }
 
-function renderInline(nodes: InlineNode[], onWikiLink: (target: string) => void): ReactNode[] {
+function renderInline(nodes: InlineNode[], context: RenderContext): ReactNode[] {
   return nodes.map((node, index) => {
     switch (node.kind) {
       case 'text':
         return <Fragment key={index}>{node.text}</Fragment>;
       case 'emphasis':
-        return <em key={index}>{renderInline(node.inline, onWikiLink)}</em>;
+        return <em key={index}>{renderInline(node.inline, context)}</em>;
       case 'strong':
-        return <strong key={index}>{renderInline(node.inline, onWikiLink)}</strong>;
+        return <strong key={index}>{renderInline(node.inline, context)}</strong>;
       case 'code':
         return <code key={index}>{node.text}</code>;
-      case 'wikiLink':
+      case 'wikiLink': {
+        const missing = !context.existingNames?.has(
+          normalizeNoteName(node.target).toLowerCase(),
+        );
+        const label = node.alias ?? node.target;
         return (
           <button
             key={index}
             type="button"
-            className="preview__wikilink"
-            onClick={() => onWikiLink(node.target)}
+            className={missing ? 'preview__wikilink preview__wikilink--missing' : 'preview__wikilink'}
+            aria-label={missing ? createLabel(node.target, node.alias) : undefined}
+            onClick={() => context.onWikiLink(node.target)}
           >
-            {node.alias ?? node.target}
+            {label}
           </button>
         );
+      }
       case 'link':
         return (
           <a key={index} href={node.href} target="_blank" rel="noopener noreferrer">
@@ -110,4 +126,10 @@ function renderInline(nodes: InlineNode[], onWikiLink: (target: string) => void)
         );
     }
   });
+}
+
+/** The name of a link that would create its target, alias included. */
+function createLabel(target: string, alias: string | null): string {
+  const name = normalizeNoteName(target);
+  return alias ? `Create note ${name} (${alias})` : `Create note ${name}`;
 }

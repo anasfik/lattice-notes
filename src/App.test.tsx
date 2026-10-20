@@ -11,6 +11,24 @@ import { loadVault, saveVault } from './storage/vaultRepository';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// jsdom ships the dialog element without the modal behaviour, so the harness
+// stands in for the platform: the open state, focus moved into the dialog,
+// and focus restored to the element that had it before the dialog opened.
+const dialogProto = HTMLDialogElement.prototype as unknown as Record<string, unknown>;
+if (typeof dialogProto.showModal !== 'function') {
+  const restore = new WeakMap<object, HTMLElement | null>();
+  dialogProto.showModal = function showModal(this: HTMLDialogElement) {
+    restore.set(this, document.activeElement as HTMLElement | null);
+    this.setAttribute('open', '');
+    this.querySelector<HTMLElement>('input, button')?.focus();
+  };
+  dialogProto.close = function close(this: HTMLDialogElement) {
+    this.removeAttribute('open');
+    this.dispatchEvent(new Event('close'));
+    restore.get(this)?.focus();
+  };
+}
+
 const DB_NAME = 'lattice-notes';
 const STORE_NAME = 'vault';
 const DOCUMENT_KEY = 'current';
@@ -142,6 +160,28 @@ function editorTextarea(): HTMLTextAreaElement {
   return found;
 }
 
+function searchInput(): HTMLInputElement {
+  const found = container.querySelector<HTMLInputElement>('.search__input');
+  if (!found) throw new Error('no search input');
+  return found;
+}
+
+function paletteDialog(): HTMLDialogElement {
+  const found = container.querySelector<HTMLDialogElement>('dialog.palette');
+  if (!found) throw new Error('no palette dialog');
+  return found;
+}
+
+function paletteInput(): HTMLInputElement {
+  const found = paletteDialog().querySelector<HTMLInputElement>('input');
+  if (!found) throw new Error('no palette input');
+  return found;
+}
+
+function paletteOptions(): HTMLElement[] {
+  return Array.from(paletteDialog().querySelectorAll<HTMLElement>('[role="option"]'));
+}
+
 async function waitFor(check: () => boolean | Promise<boolean>, timeout = 4000): Promise<void> {
   // Waiting runs with the act environment off, the way React Testing Library
   // does it: asynchronous app updates may land between assertions, and the
@@ -198,6 +238,15 @@ async function renderApp(): Promise<void> {
     root.render(<App />);
   });
   await waitFor(() => container.querySelector('.workspace') !== null);
+}
+
+/** Opens the command palette with the shortcut under test. */
+async function openPalette(): Promise<void> {
+  await act(async () => {
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }),
+    );
+  });
 }
 
 beforeEach(async () => {
@@ -371,15 +420,14 @@ describe('workspace shell', () => {
     expect(noteNames()).toContain('Untitled');
   });
 
-  it('announces a missing wiki target without creating it', async () => {
+  it('names a missing wiki link as a create action', async () => {
     const created = createNote(createEmptyVault(), 'Alpha', 'See [[Nowhere]] now.');
     await saveVault({ ...created.vault, activeNoteId: created.note.id });
 
     await renderApp();
-    await click(container.querySelector('.preview__wikilink') as Element);
 
-    expect(statusText()).toContain('No note named Nowhere yet');
-    expect(noteNames()).toEqual(['Alpha']);
+    const link = container.querySelector('.preview__wikilink');
+    expect(link?.getAttribute('aria-label')).toBe('Create note Nowhere');
   });
 
   it('keeps one polite live region and a persistent visible label', async () => {
@@ -466,5 +514,240 @@ describe('unreadable storage', () => {
 
     expect((await readRawDocument()).version).toBe(2);
     expect(alertText()).toContain('Local storage');
+  });
+});
+
+describe('search', () => {
+  async function renderRoadmap(): Promise<void> {
+    const first = createNote(createEmptyVault(), 'Roadmap', 'Plan the release.');
+    const second = createNote(first.vault, 'Backlog', 'Nothing here yet.');
+    await saveVault({ ...second.vault, activeNoteId: first.note.id });
+    await renderApp();
+  }
+
+  it('opens a note found by its title', async () => {
+    await renderRoadmap();
+
+    await fill(searchInput(), 'Roadmap');
+
+    const result = container.querySelector('.search__result');
+    expect(result?.textContent).toContain('Roadmap');
+    expect(statusText()).toContain('1 result for “Roadmap”');
+
+    await click(result as Element);
+
+    expect(editorTitle()).toBe('Roadmap');
+  });
+
+  it('shows the snippet of a note found by its body', async () => {
+    await renderRoadmap();
+
+    await fill(searchInput(), 'release');
+
+    const result = container.querySelector('.search__result');
+    expect(result?.textContent).toContain('Roadmap');
+    expect(result?.querySelector('.search__snippet')?.textContent).toContain('Plan the release');
+  });
+
+  it('echoes a query with no matches and clears it', async () => {
+    await renderRoadmap();
+
+    await fill(searchInput(), 'zzz absent');
+
+    expect(container.querySelector('.search__empty')?.textContent).toContain('zzz absent');
+    expect(statusText()).toContain('No results for “zzz absent”');
+
+    await click(buttonByName('Clear search'));
+
+    expect(searchInput().value).toBe('');
+    expect(container.querySelector('.search__empty')).toBeNull();
+  });
+
+  it('never returns a deleted note', async () => {
+    const created = createNote(createEmptyVault(), 'Roadmap', 'Plan the release.');
+    await saveVault(deleteNote(created.vault, created.note.id).vault);
+
+    await renderApp();
+    await fill(searchInput(), 'Roadmap');
+
+    expect(container.querySelector('.search__result')).toBeNull();
+    expect(container.querySelector('.search__empty')?.textContent).toContain('Roadmap');
+  });
+
+  it('focuses the search field with Ctrl+P from the editor', async () => {
+    await renderRoadmap();
+    editorTextarea().focus();
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(document.activeElement).toBe(searchInput());
+  });
+});
+
+describe('command palette', () => {
+  it('opens with Ctrl+K, takes the keyboard, and closes with Escape', async () => {
+    await renderApp();
+
+    await openPalette();
+
+    expect(paletteDialog().hasAttribute('open')).toBe(true);
+    expect(document.activeElement).toBe(paletteInput());
+
+    await pressKey(paletteInput(), 'Escape');
+
+    expect(paletteDialog().hasAttribute('open')).toBe(false);
+  });
+
+  it('returns focus to the trigger when it closes', async () => {
+    await renderApp();
+    const trigger = buttonByName('Commands');
+    trigger.focus();
+
+    await click(trigger);
+    expect(paletteDialog().hasAttribute('open')).toBe(true);
+
+    await pressKey(paletteInput(), 'Escape');
+
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('runs the New note command', async () => {
+    await renderApp();
+    const before = noteNames().length;
+
+    await openPalette();
+    const option = paletteOptions().find((element) => element.textContent?.includes('New note'));
+    await click(option as Element);
+
+    expect(noteNames()).toHaveLength(before + 1);
+    expect(editorTitle()).toBe('Untitled');
+    expect(statusText()).toContain('Created');
+    expect(paletteDialog().hasAttribute('open')).toBe(false);
+  });
+
+  it('opens a note from the palette with the keyboard', async () => {
+    const first = createNote(createEmptyVault(), 'Alpha', 'Body one.');
+    const second = createNote(first.vault, 'Beta', 'Body two.');
+    await saveVault({ ...second.vault, activeNoteId: first.note.id });
+    await renderApp();
+
+    await openPalette();
+    await fill(paletteInput(), 'Beta');
+
+    const options = paletteOptions();
+    expect(options).toHaveLength(1);
+    expect(options[0]?.textContent).toContain('Beta');
+
+    await pressKey(paletteInput(), 'Enter');
+
+    expect(editorTitle()).toBe('Beta');
+    expect(paletteDialog().hasAttribute('open')).toBe(false);
+  });
+
+  it('moves the active option with the arrow keys', async () => {
+    await renderApp();
+
+    await openPalette();
+    expect(paletteOptions()).toHaveLength(2);
+
+    await pressKey(paletteInput(), 'ArrowDown');
+    expect(paletteInput().getAttribute('aria-activedescendant')).toContain('option-1');
+
+    await pressKey(paletteInput(), 'ArrowUp');
+    expect(paletteInput().getAttribute('aria-activedescendant')).toContain('option-0');
+  });
+
+  it('keeps a single polite live region with the palette open', async () => {
+    await renderApp();
+
+    await openPalette();
+    await fill(searchInput(), 'Getting');
+
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
+  });
+});
+
+describe('linked notes', () => {
+  it('creates a missing wiki target once and selects it', async () => {
+    const created = createNote(createEmptyVault(), 'Alpha', 'See [[Ghost]] now.');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+    await renderApp();
+
+    await click(container.querySelector('.preview__wikilink') as Element);
+
+    expect(noteNames()).toEqual(['Alpha', 'Ghost']);
+    expect(editorTitle()).toBe('Ghost');
+    expect(statusText()).toContain('Created Ghost');
+
+    await click(buttonByName('Alpha'));
+    await click(container.querySelector('.preview__wikilink') as Element);
+
+    expect(noteNames()).toEqual(['Alpha', 'Ghost']);
+    expect(editorTitle()).toBe('Ghost');
+  });
+
+  it('keeps the keyboard in the note it opened', async () => {
+    const created = createNote(createEmptyVault(), 'Alpha', 'See [[Ghost]] now.');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+    await renderApp();
+
+    await click(container.querySelector('.preview__wikilink') as Element);
+
+    expect(document.activeElement).toBe(editorTextarea());
+  });
+
+  it('lists the backlinks of the active note and opens one', async () => {
+    const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]] now.');
+    const second = createNote(first.vault, 'Beta', 'Beta body.');
+    await saveVault({ ...second.vault, activeNoteId: second.note.id });
+    await renderApp();
+
+    const nav = container.querySelector('nav[aria-label="Backlinks"]');
+    expect(nav?.textContent).toContain('Alpha');
+
+    await click(nav?.querySelector('button') as Element);
+
+    expect(editorTitle()).toBe('Alpha');
+    expect(document.activeElement).toBe(editorTextarea());
+  });
+
+  it('lists the outgoing links and offers to create the missing one', async () => {
+    const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]] and [[Ghost]].');
+    const second = createNote(first.vault, 'Beta', 'Beta body.');
+    await saveVault({ ...second.vault, activeNoteId: first.note.id });
+    await renderApp();
+
+    const links = container.querySelector('.context__links');
+    expect(links?.textContent).toContain('Beta');
+    expect(links?.textContent).toContain('Create “Ghost”');
+
+    const create = Array.from(links?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent?.includes('Create'),
+    );
+    await click(create as Element);
+
+    expect(noteNames()).toEqual(['Alpha', 'Beta', 'Ghost']);
+    expect(editorTitle()).toBe('Ghost');
+  });
+
+  it('draws the local graph and opens a node', async () => {
+    const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]].');
+    const second = createNote(first.vault, 'Beta', 'See [[Alpha]].');
+    await saveVault({ ...second.vault, activeNoteId: first.note.id });
+    await renderApp();
+
+    await waitFor(() => container.querySelector('.graph__node') !== null);
+
+    expect(container.querySelectorAll('.graph__node')).toHaveLength(2);
+    expect(container.querySelectorAll('.graph__edge')).toHaveLength(2);
+    expect(container.querySelector('.graph__node[aria-current="true"]')).not.toBeNull();
+
+    await click(container.querySelector('.graph__list button') as Element);
+
+    expect(editorTitle()).toBe('Beta');
   });
 });

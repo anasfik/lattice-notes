@@ -1,12 +1,15 @@
+import type { RefObject } from 'react';
+
 import type { Note } from '../domain/types';
 
 export interface EditorProps {
   note: Note | null;
+  textareaRef?: RefObject<HTMLTextAreaElement | null>;
   onChange(body: string): void;
 }
 
 /** The Markdown editor. The label stays visible so the field is never unnamed. */
-export default function Editor({ note, onChange }: EditorProps) {
+export default function Editor({ note, textareaRef, onChange }: EditorProps) {
   return (
     <section className="editor" aria-labelledby="editor-title">
       <header className="editor__header">
@@ -19,6 +22,7 @@ export default function Editor({ note, onChange }: EditorProps) {
       </label>
       <textarea
         id="note-editor"
+        ref={textareaRef}
         className="editor__textarea"
         value={note?.body ?? ''}
         disabled={!note}
