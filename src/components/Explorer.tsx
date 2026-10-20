@@ -30,25 +30,41 @@ export default function Explorer({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const noteButtons = useRef(new Map<string, HTMLButtonElement>());
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const returnFocusId = useRef<string | null>(null);
 
   useEffect(() => {
     if (!focusNote) return;
     noteButtons.current.get(focusNote.id)?.focus();
   }, [focusNote]);
 
+  // Opening the rename field moves the keyboard into it; closing it gives the
+  // keyboard back to the note it came from.
+  useEffect(() => {
+    if (renamingId) {
+      renameInputRef.current?.focus();
+      return;
+    }
+    const id = returnFocusId.current;
+    if (!id) return;
+    returnFocusId.current = null;
+    noteButtons.current.get(id)?.focus();
+  }, [renamingId]);
+
   const startRename = (note: Note) => {
     setRenamingId(note.id);
     setDraft(note.name);
   };
 
-  const cancelRename = () => {
+  const closeRename = (id: string) => {
+    returnFocusId.current = id;
     setRenamingId(null);
     setDraft('');
   };
 
   const commitRename = (id: string) => {
     onRename(id, draft);
-    cancelRename();
+    closeRename(id);
   };
 
   return (
@@ -97,6 +113,7 @@ export default function Explorer({
                 >
                   <input
                     className="explorer__rename-input"
+                    ref={renameInputRef}
                     aria-label="Note name"
                     value={draft}
                     onChange={(event) => setDraft(event.target.value)}
@@ -105,13 +122,13 @@ export default function Explorer({
                         event.preventDefault();
                         commitRename(note.id);
                       }
-                      if (event.key === 'Escape') cancelRename();
+                      if (event.key === 'Escape') closeRename(note.id);
                     }}
                   />
                   <button type="submit" className="explorer__action">
                     Save name
                   </button>
-                  <button type="button" className="explorer__action" onClick={cancelRename}>
+                  <button type="button" className="explorer__action" onClick={() => closeRename(note.id)}>
                     Cancel
                   </button>
                 </form>

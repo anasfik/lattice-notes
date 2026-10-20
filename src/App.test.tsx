@@ -6,11 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import App from './App';
 import { createEmptyVault, createNote, deleteNote } from './domain/vault';
+import type { Vault } from './domain/types';
 import { loadVault, saveVault } from './storage/vaultRepository';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const DB_NAME = 'lattice-notes';
+const STORE_NAME = 'vault';
+const DOCUMENT_KEY = 'current';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -57,6 +60,50 @@ async function restoreStore(): Promise<void> {
     };
     request.onerror = () => reject(request.error ?? new Error('create failed'));
   });
+}
+
+/** Reads the stored document without the repository's version check. */
+async function readRawDocument(): Promise<{ version: number; vault: Vault }> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('raw open failed'));
+  });
+  try {
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(DOCUMENT_KEY);
+      request.onsuccess = () => resolve(request.result as { version: number; vault: Vault });
+      request.onerror = () => reject(request.error ?? new Error('raw read failed'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/** Writes a raw document, including envelopes the repository must reject. */
+async function writeRawDocument(document: unknown): Promise<void> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('raw open failed'));
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, 'readwrite');
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('raw write failed'));
+      transaction.objectStore(STORE_NAME).put(document, DOCUMENT_KEY);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/** Stores a readable vault that the repository refuses to load. */
+async function storeUnreadableDocument(): Promise<void> {
+  const { vault } = createNote(createEmptyVault(), 'Stored note');
+  await saveVault(vault);
+  await writeRawDocument({ version: 2, vault });
 }
 
 function queryAll<E extends HTMLElement = HTMLElement>(selector: string): E[] {
@@ -136,6 +183,13 @@ async function fill(element: HTMLInputElement | HTMLTextAreaElement, value: stri
 async function pressKey(element: Element, key: string): Promise<void> {
   await act(async () => {
     element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  });
+}
+
+/** Waits past the save debounce so any scheduled write would have run. */
+async function sleep(ms: number): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
   });
 }
 
@@ -344,5 +398,73 @@ describe('workspace shell', () => {
     await fill(editorTextarea(), 'saved body');
 
     await waitFor(() => statusText().includes('Saved to local storage'));
+  });
+});
+
+describe('keyboard focus', () => {
+  it('focuses the rename field and returns focus to the note on cancel', async () => {
+    await renderApp();
+
+    await click(buttonByName('Rename Welcome to Lattice Notes'));
+    const input = container.querySelector<HTMLInputElement>('.explorer__rename-input');
+    if (!input) throw new Error('no rename input');
+
+    expect(document.activeElement).toBe(input);
+
+    await pressKey(input, 'Escape');
+
+    expect(document.activeElement?.textContent).toBe('Welcome to Lattice Notes');
+  });
+
+  it('returns focus to the note after a rename is committed', async () => {
+    await renderApp();
+
+    await click(buttonByName('Rename Welcome to Lattice Notes'));
+    const input = container.querySelector<HTMLInputElement>('.explorer__rename-input');
+    if (!input) throw new Error('no rename input');
+    await fill(input, 'Welcome');
+    await pressKey(input, 'Enter');
+
+    expect(document.activeElement?.textContent).toBe('Welcome');
+  });
+
+  it('moves focus to the surviving note after a delete', async () => {
+    await renderApp();
+
+    await click(buttonByName('Delete Welcome to Lattice Notes'));
+
+    expect(document.activeElement?.textContent).toBe('Getting started');
+  });
+});
+
+describe('unreadable storage', () => {
+  it('offers a retry that replaces the unreadable vault with the tab notes', async () => {
+    await storeUnreadableDocument();
+
+    await renderApp();
+    expect(alertText()).toContain('Local storage');
+
+    await click(buttonByName('Create first note'));
+    await click(buttonByName('Retry'));
+
+    await waitFor(() => alertText().includes('replaces the unreadable vault'));
+
+    await click(buttonByName('Retry'));
+
+    await waitFor(async () => (await readRawDocument()).version === 1);
+    const stored = await readRawDocument();
+    expect(stored.vault.notes.map((note) => note.name)).toEqual(['Untitled']);
+  });
+
+  it('never writes over a vault it could not read', async () => {
+    await storeUnreadableDocument();
+
+    await renderApp();
+    await click(buttonByName('Create first note'));
+    await fill(editorTextarea(), 'edited body');
+    await sleep(600);
+
+    expect((await readRawDocument()).version).toBe(2);
+    expect(alertText()).toContain('Local storage');
   });
 });

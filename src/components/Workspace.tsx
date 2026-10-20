@@ -44,7 +44,7 @@ export default function Workspace(props: WorkspaceProps) {
           aria-label="New note"
           onClick={props.onCreate}
         >
-          <span aria-hidden="true">+</span>
+          New
         </button>
       </nav>
 

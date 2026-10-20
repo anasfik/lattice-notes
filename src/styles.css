@@ -204,7 +204,8 @@ a {
   place-content: center;
   width: var(--touch-target);
   height: var(--touch-target);
-  font-size: var(--text-lg);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
   line-height: 1;
   color: var(--color-ink);
   background: var(--color-surface-raised);

@@ -39,6 +39,7 @@ export default function App() {
   const baseRef = useRef<Vault | null>(null);
   const saveSeq = useRef(0);
   const bootedRef = useRef(false);
+  const loadFailures = useRef(0);
 
   /** Applies the next vault to the state and to the ref the handlers read. */
   const applyVault = useCallback((next: Vault) => {
@@ -68,6 +69,7 @@ export default function App() {
         setStatus('Local vault restored');
       } catch {
         baseRef.current = vaultRef.current;
+        loadFailures.current += 1;
         setMode('memory-only');
         setRetryKind('load');
         setError('Local storage could not be read, so this session runs in memory only. Notes are not saved yet.');
@@ -138,6 +140,9 @@ export default function App() {
     const { vault: next, note } = deleteNote(current, id);
     if (!note || next === current) return;
     applyVault(next);
+    // The deleted row disappears with the focus on it, so the keyboard is
+    // handed to the note the vault selected instead.
+    if (next.activeNoteId) setFocusNote({ id: next.activeNoteId });
     setUndo({ id: note.id, name: note.name });
     setStatus(`Deleted ${note.name}`);
   }, [applyVault]);
@@ -193,6 +198,14 @@ export default function App() {
       setError(null);
       setStatus('Local vault restored');
     } catch {
+      loadFailures.current += 1;
+      if (loadFailures.current >= 2) {
+        // The stored document stays unreadable, so retrying the read can only
+        // loop. Offer the way out: write this tab's notes over it.
+        setRetryKind('save');
+        setError('Local storage still cannot be read. Retry replaces the unreadable vault with the notes of this tab.');
+        return;
+      }
       setError('Local storage could not be read, so this session runs in memory only. Notes are not saved yet.');
     }
   }, [applyVault, retryKind, save]);
