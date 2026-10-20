@@ -27,6 +27,8 @@ export interface ContextRailProps {
   /** Opens a note and hands the keyboard to the content on the screen. */
   onNavigate(id: string): void;
   onWikiLink(target: string): void;
+  /** Opens the fullscreen graph of the vault. */
+  onOpenGraph?(): void;
 }
 /** The active note with its backlinks, its outgoing links, and the local graph. */
 export default function ContextRail({
@@ -36,6 +38,7 @@ export default function ContextRail({
   graphPending = false,
   onNavigate,
   onWikiLink,
+  onOpenGraph,
 }: ContextRailProps) {
   const links = useMemo(() => (note ? parseNote(note.body).links : []), [note]);
   const backlinks = useMemo(() => {
@@ -102,9 +105,20 @@ export default function ContextRail({
           </nav>
 
           <section className="context__section" aria-labelledby="context-graph">
-            <h3 className="context__heading" id="context-graph">
-              Graph
-            </h3>
+            <div className="context__heading-row">
+              <h3 className="context__heading" id="context-graph">
+                Graph
+              </h3>
+              {onOpenGraph ? (
+                <button
+                  type="button"
+                  className="context__graph-open"
+                  onClick={onOpenGraph}
+                >
+                  Fullscreen graph
+                </button>
+              ) : null}
+            </div>
             <Graph
               graph={graph ?? { activeId: '', nodes: [], edges: [], backlinks: [] }}
               // The picture opens a note like the list does, so the keyboard

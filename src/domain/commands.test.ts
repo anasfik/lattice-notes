@@ -34,6 +34,7 @@ function handlers(): CommandHandlers & { calls: string[] } {
     previousTab: () => calls.push('previousTab'),
     openDailyNote: () => calls.push('openDailyNote'),
     openCalendar: () => calls.push('openCalendar'),
+    openGraph: () => calls.push('openGraph'),
   };
 }
 
@@ -64,10 +65,20 @@ describe('command catalog', () => {
       'vault.manager',
       'view.calendar',
       'view.context',
+      'view.graph',
       'view.read',
       'view.split',
       'view.write',
     ]);
+  });
+
+  it('keeps the graph available without a note', () => {
+    const catalog = buildCommands(
+      { ...available(), hasActiveNote: false, canUndo: false, openTabCount: 0 },
+      handlers(),
+    );
+
+    expect(command(catalog, 'view.graph').disabledReason).toBeUndefined();
   });
 
   it('keeps the daily note and the calendar available without a note', () => {

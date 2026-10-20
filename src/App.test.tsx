@@ -2980,3 +2980,72 @@ describe('the daily notes and the calendar', () => {
     await waitFor(() => container.querySelector('dialog.calendar')?.hasAttribute('open') === true);
   });
 });
+
+describe('the fullscreen graph', () => {
+  it('opens from the command and from the trigger with one graph', async () => {
+    await renderLegacyApp();
+
+    await runCommand('Open the fullscreen graph');
+    await waitFor(
+      () => container.querySelector('dialog.graphview')?.hasAttribute('open') === true,
+    );
+    expect(container.querySelectorAll('dialog.graphview')).toHaveLength(1);
+
+    await pressKey(container.querySelector('dialog.graphview') as Element, 'Escape');
+    await waitFor(
+      () => container.querySelector('dialog.graphview')?.hasAttribute('open') === false,
+    );
+
+    await click(buttonByName('Open the fullscreen graph'));
+    await waitFor(
+      () => container.querySelector('dialog.graphview')?.hasAttribute('open') === true,
+    );
+    expect(container.querySelectorAll('dialog.graphview')).toHaveLength(1);
+  });
+
+  it('opens a note of the graph into the content on the screen', async () => {
+    await renderLegacyApp();
+
+    await click(buttonByName('Open the fullscreen graph'));
+    await waitFor(
+      () => container.querySelector('dialog.graphview')?.hasAttribute('open') === true,
+    );
+
+    const item = container.querySelector<HTMLButtonElement>('.graphview__list button');
+    if (!item) throw new Error('no note in the graph list');
+    const name = item.textContent?.trim() ?? '';
+    await click(item);
+    const open = container.querySelector<HTMLButtonElement>('.graphview__open');
+    if (!open) throw new Error('no open control in the graph');
+    await click(open);
+
+    await waitFor(() => noteTitle() === name);
+    expect(container.querySelector('.workspace__panes')?.hasAttribute('hidden')).toBe(false);
+    expect(document.activeElement).toBe(editorTextarea());
+    expect(tabLabels().filter((label) => label === name)).toHaveLength(1);
+  });
+
+  it('announces the graph in the one polite region', async () => {
+    await renderLegacyApp();
+
+    await click(buttonByName('Open the fullscreen graph'));
+
+    await waitFor(() => statusText().includes('Graph'));
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
+  });
+
+  it('keeps the graph inside a narrow screen', async () => {
+    window.innerWidth = 320;
+    await renderLegacyApp();
+
+    await click(buttonByName('Open the fullscreen graph'));
+    await waitFor(
+      () => container.querySelector('dialog.graphview')?.hasAttribute('open') === true,
+    );
+
+    expect(container.querySelectorAll('dialog.graphview')).toHaveLength(1);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
+      document.documentElement.clientWidth,
+    );
+  });
+});

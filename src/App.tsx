@@ -53,6 +53,7 @@ import {
 import type { VaultCatalog, VaultTabSession } from './storage/vaultRepository';
 import CommandPalette from './components/CommandPalette';
 import Calendar from './components/Calendar';
+import GraphView from './components/GraphView';
 import Onboarding from './components/Onboarding';
 import QuickSwitcher from './components/QuickSwitcher';
 import VaultManager from './components/VaultManager';
@@ -101,6 +102,7 @@ export default function App() {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [graphOpen, setGraphOpen] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [searchRequest, setSearchRequest] = useState(0);
   const [focusContentRequest, setFocusContentRequest] = useState(0);
@@ -155,6 +157,11 @@ export default function App() {
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const graphTriggerRef = useRef<HTMLButtonElement>(null);
+  /** True while the graph closed because a note was opened from it. */
+  const graphOpenedNote = useRef(false);
+  /** True while the graph was on the screen, so the close is only handled once. */
+  const graphWasOpen = useRef(false);
 
   /** The undo slot of the vault that is on the screen. */
   const undoKey = vaultId ?? '';
@@ -776,6 +783,54 @@ export default function App() {
     setCalendarOpen(true);
   }, []);
 
+  /** Opens the fullscreen graph of the vault. */
+  const handleOpenGraph = useCallback(() => {
+    setGraphOpen(true);
+  }, []);
+
+  /** Closes the fullscreen graph. */
+  const handleCloseGraph = useCallback(() => {
+    setGraphOpen(false);
+  }, []);
+
+  /**
+   * Opens a note of the graph.
+   *
+   * The graph closes first and the keyboard goes to the content that is on
+   * the screen, so the note is not opened behind a panel that is still there.
+   */
+  const handleOpenGraphNote = useCallback(
+    (id: string) => {
+      handleSelect(id);
+      graphOpenedNote.current = true;
+      setGraphOpen(false);
+    },
+    [handleSelect],
+  );
+
+  /**
+   * The keyboard after the graph closed.
+   *
+   * The graph gives the keyboard back to the element that opened it. When
+   * that element is gone (the command palette closed with it), the trigger
+   * of the toolbar takes the keyboard, or the content when a note was opened
+   * from the graph.
+   */
+  useEffect(() => {
+    if (graphOpen) {
+      graphWasOpen.current = true;
+      return;
+    }
+    if (!graphWasOpen.current) return;
+    graphWasOpen.current = false;
+    if (graphOpenedNote.current) {
+      graphOpenedNote.current = false;
+      focusContent();
+      return;
+    }
+    if (document.activeElement === document.body) graphTriggerRef.current?.focus();
+  }, [focusContent, graphOpen]);
+
   const openPalette = useCallback(() => {
     setPaletteOpen(true);
   }, []);
@@ -1076,6 +1131,7 @@ export default function App() {
           previousTab: () => handleStepTab(-1),
           openDailyNote: handleOpenTodaysNote,
           openCalendar: handleOpenCalendar,
+          openGraph: handleOpenGraph,
         },
       ),
     [
@@ -1085,6 +1141,7 @@ export default function App() {
       handleExport,
       handleImport,
       handleOpenCalendar,
+      handleOpenGraph,
       handleOpenTodaysNote,
       handleRenameActive,
       handleStepTab,
@@ -1103,7 +1160,7 @@ export default function App() {
 
   // A modal is open: a shortcut behind it would act on a note the user
   // cannot see.
-  const modalOpen = paletteOpen || switcherOpen || managerOpen || calendarOpen;
+  const modalOpen = paletteOpen || switcherOpen || managerOpen || calendarOpen || graphOpen;
 
   // The palette, the quick switcher and the new note are reachable from
   // anywhere, including from the editor.
@@ -1189,6 +1246,8 @@ export default function App() {
         onOpenVaults={openVaultManager}
         onOpenPalette={openPalette}
         onOpenCalendar={handleOpenCalendar}
+        onOpenGraph={handleOpenGraph}
+        graphTriggerRef={graphTriggerRef}
         onOpenDailyNote={handleOpenTodaysNote}
         onRetry={() => {
           void handleRetry();
@@ -1226,6 +1285,13 @@ export default function App() {
           setCalendarOpen(false);
         }}
         onFocusContent={focusContent}
+      />
+      <GraphView
+        open={graphOpen}
+        vault={vault}
+        onOpenNote={handleOpenGraphNote}
+        onClose={handleCloseGraph}
+        onAnnounce={announce}
       />
       <QuickSwitcher
         open={switcherOpen}

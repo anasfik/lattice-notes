@@ -74,6 +74,10 @@ export interface WorkspaceProps {
   onOpenPalette(): void;
   /** Opens the calendar of the daily notes. */
   onOpenCalendar(): void;
+  /** Opens the fullscreen graph of the vault. */
+  onOpenGraph(): void;
+  /** The trigger of the graph, so the keyboard can go back to it. */
+  graphTriggerRef?: RefObject<HTMLButtonElement | null>;
   /** Opens the note of today. */
   onOpenDailyNote(): void;
   onRetry(): void;
@@ -365,6 +369,16 @@ export default function Workspace(props: WorkspaceProps) {
             </button>
             <button
               type="button"
+              className="workspace__graph"
+              aria-haspopup="dialog"
+              aria-label="Open the fullscreen graph"
+              ref={props.graphTriggerRef}
+              onClick={props.onOpenGraph}
+            >
+              Graph
+            </button>
+            <button
+              type="button"
               className="workspace__command"
               aria-haspopup="dialog"
               aria-keyshortcuts="Control+K Meta+K"
@@ -590,6 +604,7 @@ export default function Workspace(props: WorkspaceProps) {
           graphPending={props.graphPending}
           onNavigate={props.onNavigate}
           onWikiLink={props.onWikiLink}
+          onOpenGraph={props.onOpenGraph}
         />
       </aside>
     </div>

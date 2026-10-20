@@ -52,6 +52,7 @@ function commands(): CommandAction[] {
       previousTab: () => RUN.push('previousTab'),
       openDailyNote: () => RUN.push('openDailyNote'),
       openCalendar: () => RUN.push('openCalendar'),
+      openGraph: () => RUN.push('openGraph'),
     },
   );
 }

@@ -57,6 +57,8 @@ export interface CommandHandlers {
   openDailyNote(): void;
   /** Opens the calendar of the daily notes. */
   openCalendar(): void;
+  /** Opens the fullscreen graph of the vault. */
+  openGraph(): void;
 }
 
 /**
@@ -153,6 +155,12 @@ export function buildCommands(
       label: 'Open the calendar',
       category: 'View',
       run: handlers.openCalendar,
+    },
+    {
+      id: 'view.graph',
+      label: 'Open the fullscreen graph',
+      category: 'View',
+      run: handlers.openGraph,
     },
     {
       id: 'view.context',
