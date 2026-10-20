@@ -299,9 +299,11 @@ describe('workspace shell', () => {
     try {
       await renderApp();
     } finally {
-      const messages = spy.mock.calls.map((call) => call.map(String).join(' ')).join('\n');
+      const calls = spy.mock.calls;
       spy.mockRestore();
-      expect(messages).not.toContain('unrecognized in this browser');
+      // The application logs nothing at all: every console error is a defect,
+      // not only the one message this test used to look for.
+      expect(calls).toEqual([]);
     }
     expect(container.querySelector('search')).toBeNull();
   });
@@ -327,6 +329,21 @@ describe('workspace shell', () => {
 
     expect(noteNames()).toContain('Scratch');
     expect(statusText()).toContain('Restored');
+  });
+
+  it('drops the undo control when the empty state restores the note', async () => {
+    const created = createNote(createEmptyVault(), 'Only note');
+    await saveVault(created.vault);
+    await renderApp();
+
+    await click(buttonByName('Delete Only note'));
+    expect(container.querySelectorAll('.workspace__undo')).toHaveLength(1);
+
+    await click(buttonByName('Restore Only note'));
+
+    expect(noteNames()).toContain('Only note');
+    // The undo slot held the restored note, so the control would do nothing.
+    expect(container.querySelectorAll('.workspace__undo')).toHaveLength(0);
   });
 
   it('creates a note, selects it, and announces the change', async () => {
@@ -416,7 +433,7 @@ describe('workspace shell', () => {
     const created = createNote(
       createEmptyVault(),
       'Hostile',
-      '<script>alert(1)</script> [click](javascript:alert(1))',
+      '<script>alert(1)</script> [click](javascript:alert(1)) [safe](https://example.com)',
     );
     await saveVault({ ...created.vault, activeNoteId: created.note.id });
 
@@ -424,8 +441,12 @@ describe('workspace shell', () => {
     const body = container.querySelector('.preview__body');
 
     expect(body?.querySelector('script')).toBeNull();
-    expect(body?.querySelector('a')?.getAttribute('href') ?? '').not.toContain('javascript:');
+    // The hostile target is dropped by the parser, so there is no anchor at
+    // all; the safe link of the same note proves the query would have found
+    // one.
+    expect(body?.querySelector('a[href*="javascript"]')).toBeNull();
     expect(body?.textContent).toContain('<script>');
+    expect(body?.querySelector('a')?.getAttribute('href')).toBe('https://example.com');
   });
 
   it('keeps the notes usable and warns when saving fails', async () => {
@@ -571,6 +592,19 @@ describe('import and export', () => {
     expect(noteNames()).toContain('notes');
     expect(noteNames()).toEqual(expect.arrayContaining(before));
     expect(statusText()).toContain('Imported 1 note');
+  });
+
+  it('says that an import in memory only mode is not saved', async () => {
+    vi.stubGlobal('indexedDB', undefined);
+    await renderApp();
+
+    await selectFiles(fileInput(), [
+      new File(['# imported body'], 'notes.md', { type: 'text/markdown' }),
+    ]);
+
+    expect(statusText()).toContain('Imported 1 note');
+    expect(statusText()).toContain('not saved');
+    expect(statusText()).toContain('Export');
   });
 
   it('skips a file that is neither Markdown nor an envelope', async () => {
@@ -980,6 +1014,19 @@ describe('keyboard focus', () => {
     expect(document.activeElement?.textContent).toBe('Getting started');
   });
 
+  it('keeps the keyboard in the editor when a note is created with Ctrl/Cmd+N', async () => {
+    await renderApp();
+    editorTextarea().focus();
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(document.activeElement).toBe(editorTextarea());
+  });
+
   it('moves focus to the empty state after the last note is deleted', async () => {
     const created = createNote(createEmptyVault(), 'Only note');
     await saveVault(created.vault);
@@ -989,6 +1036,40 @@ describe('keyboard focus', () => {
 
     expect(document.activeElement).toBe(buttonByName('Create first note'));
     expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it('keeps the keyboard on the new note row when the empty state creates a note', async () => {
+    const created = createNote(createEmptyVault(), 'Only note');
+    await saveVault(created.vault);
+    await renderApp();
+
+    await click(buttonByName('Delete Only note'));
+    expect(document.activeElement).toBe(buttonByName('Create first note'));
+
+    await click(buttonByName('Create first note'));
+
+    await waitFor(() => document.activeElement !== document.body);
+    expect(document.activeElement).toBe(container.querySelector('.explorer__note'));
+    expect(document.activeElement?.textContent).toBe('Untitled');
+  });
+
+  it('keeps the keyboard on the new note row on a narrow screen', async () => {
+    const created = createNote(createEmptyVault(), 'Only note');
+    await saveVault(created.vault);
+    window.innerWidth = 390;
+    await renderApp();
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+    });
+    await click(queryAll<HTMLButtonElement>('.workspace__panel-toggle')[0] as Element);
+
+    await click(buttonByName('Delete Only note'));
+    expect(document.activeElement).toBe(buttonByName('Create first note'));
+
+    await click(buttonByName('Create first note'));
+
+    await waitFor(() => document.activeElement !== document.body);
+    expect(document.activeElement).toBe(container.querySelector('.explorer__note'));
   });
 
   it('keeps the keyboard in the note list when a note is opened', async () => {
@@ -1249,6 +1330,34 @@ describe('command palette', () => {
     expect(paletteInput().getAttribute('aria-activedescendant')).toContain('option-0');
   });
 
+  it('names the palette field and says whether it has options', async () => {
+    await renderApp();
+
+    await openPalette();
+
+    expect(paletteInput().getAttribute('aria-label')).toBe('Search commands and notes');
+    expect(paletteInput().getAttribute('aria-expanded')).toBe('true');
+
+    await fill(paletteInput(), 'zzz absent');
+
+    expect(paletteInput().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('does not create a note behind the open palette', async () => {
+    await renderApp();
+    const before = noteNames().length;
+
+    await openPalette();
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(noteNames()).toHaveLength(before);
+    expect(paletteDialog().hasAttribute('open')).toBe(true);
+  });
+
   it('keeps a single polite live region with the palette open', async () => {
     await renderApp();
 
@@ -1256,6 +1365,28 @@ describe('command palette', () => {
     await fill(searchInput(), 'Getting');
 
     expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
+  });
+});
+
+describe('preview links', () => {
+  it('opens an external link in a new tab and keeps an internal link in the same tab', async () => {
+    const created = createNote(
+      createEmptyVault(),
+      'Links',
+      'Internal [plan](notes/plan.md) and external [site](https://example.com/page).',
+    );
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+
+    await renderApp();
+    const anchors = Array.from(container.querySelectorAll<HTMLAnchorElement>('.preview__body a'));
+    expect(anchors).toHaveLength(2);
+
+    const [internal, external] = anchors;
+    expect(internal?.getAttribute('href')).toBe('notes/plan.md');
+    expect(internal?.getAttribute('target')).toBeNull();
+    expect(external?.getAttribute('href')).toBe('https://example.com/page');
+    expect(external?.getAttribute('target')).toBe('_blank');
+    expect(external?.getAttribute('rel')).toBe('noopener noreferrer');
   });
 });
 

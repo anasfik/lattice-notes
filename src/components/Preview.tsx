@@ -117,12 +117,21 @@ function renderInline(nodes: InlineNode[], context: RenderContext): ReactNode[] 
           </button>
         );
       }
-      case 'link':
+      case 'link': {
+        // Only a link that leaves the app opens a new tab. A relative target
+        // or a fragment stays in this tab, or it would open a second copy of
+        // the app.
+        const external = isExternal(node.href);
         return (
-          <a key={index} href={node.href} target="_blank" rel="noopener noreferrer">
+          <a
+            key={index}
+            href={node.href}
+            {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+          >
             {node.text}
           </a>
         );
+      }
       case 'tag':
         return (
           <span key={index} className="preview__tag">
@@ -131,6 +140,14 @@ function renderInline(nodes: InlineNode[], context: RenderContext): ReactNode[] 
         );
     }
   });
+}
+
+/**
+ * True for a link that leaves the app: an absolute web or mail address.
+ * Everything else (a relative path, a fragment) stays in the same tab.
+ */
+function isExternal(href: string): boolean {
+  return /^(?:https?:|mailto:)/i.test(href.trim());
 }
 
 /**

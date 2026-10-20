@@ -135,9 +135,16 @@ export default function App() {
   }, [mode, save, vault]);
 
   const handleCreate = useCallback(() => {
-    const { vault: next, note } = createNote(vaultRef.current);
+    const current = vaultRef.current;
+    // An empty vault shows the create button instead of the list, so the
+    // button is destroyed by the create and the keyboard needs a new home.
+    // With notes in the vault the keyboard stays where it was, so
+    // Ctrl/Cmd+N from the editor keeps the caret in the editor.
+    const wasEmpty = activeNotes(current).length === 0;
+    const { vault: next, note } = createNote(current);
     applyVault({ ...next, activeNoteId: note.id });
     setStatus(`Created ${note.name}`);
+    if (wasEmpty) setFocusNote({ kind: 'note', id: note.id });
   }, [applyVault]);
 
   const handleSelect = useCallback((id: string) => {
@@ -196,13 +203,16 @@ export default function App() {
     if (!note) return false;
     applyVault({ ...next, activeNoteId: note.id });
     setFocusNote({ kind: 'note', id: note.id });
+    // The undo slot holds the restored note, so the undo control would do
+    // nothing. It goes when the note comes back.
+    setUndo((current) => (current?.id === note.id ? null : current));
     setStatus(`Restored ${note.name}`);
     return true;
   }, [applyVault]);
 
   const handleUndo = useCallback(() => {
     if (!undo) return;
-    if (handleRestore(undo.id)) setUndo(null);
+    handleRestore(undo.id);
   }, [handleRestore, undo]);
 
   /** Opens the hidden file picker behind the visible import control. */
@@ -292,9 +302,12 @@ export default function App() {
         return;
       }
 
-      setStatus(describeImport(imported, skipped));
+      const summary = describeImport(imported, skipped);
+      // Without storage the notes only live in this tab, so the summary says
+      // so instead of only counting the import.
+      setStatus(mode === 'ready' ? summary : `${summary} (not saved — use Export)`);
     },
-    [applyVault],
+    [applyVault, mode],
   );
 
   /** Writes the vault of this tab to a JSON file. The storage is not read. */
@@ -424,6 +437,9 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      // The palette is modal: a shortcut behind it would act on a note the
+      // user cannot see.
+      if (paletteOpen) return;
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
       if (event.key.toLowerCase() !== 'n') return;
       event.preventDefault();
@@ -431,12 +447,13 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleCreate]);
+  }, [handleCreate, paletteOpen]);
 
   // The palette and the search field are reachable from anywhere, including
   // from the editor.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (paletteOpen) return;
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.repeat) return;
       const key = event.key.toLowerCase();
       if (key === 'k') {
@@ -451,7 +468,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [requestSearch]);
+  }, [paletteOpen, requestSearch]);
 
   // The graph parses every body, so it follows the vault at background
   // priority instead of on every keystroke.

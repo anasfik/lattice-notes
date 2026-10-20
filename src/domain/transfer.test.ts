@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MAX_ENVELOPE_BYTES,
+  MAX_ENVELOPE_NOTES,
   MAX_IMPORT_FILES,
   MAX_IMPORT_FILE_BYTES,
   deserializeVault,
@@ -183,6 +184,21 @@ describe('importEnvelope', () => {
     expect(result.report.imported).toBe(1);
     expect(result.report.skipped).toEqual([{ name: 'Note 2', reason: 'unreadable-content' }]);
     expect(result.vault.notes).toHaveLength(1);
+  });
+
+  it('imports the notes inside the note ceiling and reports the rest as over the batch limit', () => {
+    const entries = Array.from({ length: MAX_ENVELOPE_NOTES + 1 }, (_, index) => ({
+      name: `Note ${index}`,
+      body: '# body',
+    }));
+
+    const result = importEnvelope(vaultOf(), envelope(entries));
+
+    expect(result.report.imported).toBe(MAX_ENVELOPE_NOTES);
+    expect(result.report.skipped).toEqual([
+      { name: `Note ${MAX_ENVELOPE_NOTES}`, reason: 'batch-limit' },
+    ]);
+    expect(result.vault.notes).toHaveLength(MAX_ENVELOPE_NOTES);
   });
 
   it('imports an envelope larger than the Markdown file limit and keeps the large note', () => {

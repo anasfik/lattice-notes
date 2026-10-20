@@ -157,7 +157,8 @@ export default function CommandPalette({
         className="palette__input"
         type="text"
         role="combobox"
-        aria-expanded="true"
+        aria-label="Search commands and notes"
+        aria-expanded={options.length > 0}
         aria-controls={options.length > 0 ? listId : undefined}
         aria-autocomplete="list"
         aria-activedescendant={activeId}

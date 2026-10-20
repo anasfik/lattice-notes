@@ -136,7 +136,7 @@ export default function Graph({
       </figure>
 
       {neighbours.length > 0 ? (
-        <ul className="graph__list" aria-label="Connected notes">
+        <ul className="graph__list" role="list" aria-label="Connected notes">
           {neighbours.map((node) => (
             <li key={node.id}>
               <button type="button" className="graph__item" onClick={() => onNavigate(node.id)}>

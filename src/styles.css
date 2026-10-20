@@ -143,6 +143,13 @@ a {
     min-height: var(--touch-target);
     min-width: var(--touch-target);
   }
+
+  /* A wiki link inside a sentence is not a target of its own (WCAG 2.5.8),
+     so it keeps the text size and the underline instead of a 44px box. */
+  .preview__wikilink {
+    min-height: 0;
+    min-width: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

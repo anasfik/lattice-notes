@@ -16,6 +16,14 @@ export const MAX_IMPORT_FILE_BYTES = 1_048_576;
 export const MAX_IMPORT_FILES = 500;
 /** Largest JSON envelope that is accepted (50 MiB). */
 export const MAX_ENVELOPE_BYTES = 52_428_800;
+/**
+ * Largest number of notes one envelope may carry (20 000).
+ *
+ * A minimal note entry is about 30 bytes, so the byte ceiling alone lets a
+ * crafted envelope hold more than 100 000 notes. One import would then render
+ * every one of them in the explorer.
+ */
+export const MAX_ENVELOPE_NOTES = 20_000;
 
 export type SkipReason =
   | 'unsupported-type'
@@ -66,6 +74,9 @@ export function serializeVault(vault: Vault): string {
 export function deserializeVault(json: string): Vault {
   const parsed = parseEnvelope(json);
   if (parsed.invalid.length > 0) {
+    if (parsed.invalid.some((entry) => entry.reason === 'batch-limit')) {
+      throw new Error(`The envelope holds more than ${MAX_ENVELOPE_NOTES} notes.`);
+    }
     throw new Error('The envelope contains a note that is not readable.');
   }
   return buildVault(parsed.notes);
@@ -141,6 +152,12 @@ function parseEnvelope(json: string): { notes: ParsedNote[]; invalid: ImportSkip
   const invalid: ImportSkip[] = [];
 
   value.notes.forEach((entry: unknown, index: number) => {
+    if (notes.length >= MAX_ENVELOPE_NOTES) {
+      // Past the note ceiling the entry is reported, not imported. The import
+      // of the notes inside the ceiling still succeeds.
+      invalid.push({ name: entryName(entry, index), reason: 'batch-limit' });
+      return;
+    }
     if (!isRecord(entry) || typeof entry.name !== 'string' || typeof entry.body !== 'string') {
       invalid.push({ name: entryName(entry, index), reason: 'unreadable-content' });
       return;

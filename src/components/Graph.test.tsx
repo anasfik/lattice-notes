@@ -234,6 +234,12 @@ describe('local graph', () => {
     second.remove();
   });
 
+  it('keeps the list role on the neighbour list', async () => {
+    await render(<Graph graph={fixture()} onSelect={() => {}} onNavigate={() => {}} />);
+
+    expect(container.querySelector('ul.graph__list')?.getAttribute('role')).toBe('list');
+  });
+
   it('offers the neighbours as a touch sized list of buttons', async () => {
     const onSelect = vi.fn();
     const onNavigate = vi.fn();
