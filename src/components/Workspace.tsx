@@ -22,6 +22,8 @@ export interface WorkspaceProps {
   paletteTrigger?: ReactNode;
   onRetry(): void;
   onSelect(id: string): void;
+  /** Opens a note from a control the navigation replaces. */
+  onNavigate(id: string): void;
   onCreate(): void;
   onRename(id: string, name: string): void;
   onDelete(id: string): void;
@@ -118,6 +120,7 @@ export default function Workspace(props: WorkspaceProps) {
           graph={props.graph}
           noteNames={props.noteNames}
           onSelect={props.onSelect}
+          onNavigate={props.onNavigate}
           onWikiLink={props.onWikiLink}
         />
       </aside>

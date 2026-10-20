@@ -427,7 +427,19 @@ describe('workspace shell', () => {
     await renderApp();
 
     const link = container.querySelector('.preview__wikilink');
-    expect(link?.getAttribute('aria-label')).toBe('Create note Nowhere');
+    expect(link?.textContent).toMatch(/^Create note Nowhere/);
+    expect(accessibleName(link as Element)).toBe('Create note Nowhere');
+  });
+
+  it('keeps the alias of a missing wiki link in the visible name', async () => {
+    const created = createNote(createEmptyVault(), 'Alpha', 'See [[Nowhere|the void]] now.');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+
+    await renderApp();
+
+    const link = container.querySelector('.preview__wikilink--missing');
+    expect(link?.textContent).toMatch(/^Create note Nowhere \(the void\)/);
+    expect(accessibleName(link as Element)).toBe(link?.textContent?.trim());
   });
 
   it('keeps one polite live region and a persistent visible label', async () => {
@@ -482,6 +494,32 @@ describe('keyboard focus', () => {
     await click(buttonByName('Delete Welcome to Lattice Notes'));
 
     expect(document.activeElement?.textContent).toBe('Getting started');
+  });
+
+  it('keeps the keyboard in the note list when a note is opened', async () => {
+    await renderApp();
+    const row = container.querySelectorAll<HTMLButtonElement>('.explorer__note')[1];
+    if (!row) throw new Error('no second note row');
+    row.focus();
+
+    await click(row);
+
+    expect(document.activeElement).toBe(row);
+    expect(document.activeElement).not.toBe(editorTextarea());
+  });
+
+  it('keeps the keyboard on the search result that was opened', async () => {
+    const first = createNote(createEmptyVault(), 'Roadmap', 'Plan the release.');
+    const second = createNote(first.vault, 'Backlog', 'Nothing here yet.');
+    await saveVault({ ...second.vault, activeNoteId: first.note.id });
+    await renderApp();
+    await fill(searchInput(), 'Roadmap');
+    const result = container.querySelector<HTMLButtonElement>('.search__result');
+    result?.focus();
+
+    await click(result as Element);
+
+    expect(document.activeElement).toBe(result);
   });
 });
 

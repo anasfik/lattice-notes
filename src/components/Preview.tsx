@@ -99,13 +99,12 @@ function renderInline(nodes: InlineNode[], context: RenderContext): ReactNode[] 
         const missing = !context.existingNames?.has(
           normalizeNoteName(node.target).toLowerCase(),
         );
-        const label = node.alias ?? node.target;
+        const label = missing ? createLabel(node.target, node.alias) : (node.alias ?? node.target);
         return (
           <button
             key={index}
             type="button"
             className={missing ? 'preview__wikilink preview__wikilink--missing' : 'preview__wikilink'}
-            aria-label={missing ? createLabel(node.target, node.alias) : undefined}
             onClick={() => context.onWikiLink(node.target)}
           >
             {label}
@@ -128,7 +127,10 @@ function renderInline(nodes: InlineNode[], context: RenderContext): ReactNode[] 
   });
 }
 
-/** The name of a link that would create its target, alias included. */
+/**
+ * The visible name of a link that would create its target. The alias stays in
+ * the name, so the visible text is part of the accessible name.
+ */
 function createLabel(target: string, alias: string | null): string {
   const name = normalizeNoteName(target);
   return alias ? `Create note ${name} (${alias})` : `Create note ${name}`;

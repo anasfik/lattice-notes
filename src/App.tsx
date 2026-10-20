@@ -122,10 +122,19 @@ export default function App() {
     if (!note) return;
     if (current.activeNoteId !== id) applyVault({ ...current, activeNoteId: id });
     setStatus(`Opened ${note.name}`);
-    // A navigation replaces the control that was used, so the keyboard goes
-    // to the note it opened.
-    editorRef.current?.focus();
   }, [applyVault]);
+
+  /**
+   * Opens a note from a control that the navigation destroys, so the keyboard
+   * has to be placed somewhere that survives.
+   */
+  const handleNavigate = useCallback(
+    (id: string) => {
+      handleSelect(id);
+      editorRef.current?.focus();
+    },
+    [handleSelect],
+  );
 
   const handleChange = useCallback((body: string) => {
     const current = vaultRef.current;
@@ -178,6 +187,8 @@ export default function App() {
       );
       if (match) {
         handleSelect(match.id);
+        // The preview link is replaced by the note it opens.
+        editorRef.current?.focus();
         return;
       }
       // A missing target becomes the note it names, once.
@@ -307,6 +318,7 @@ export default function App() {
           void handleRetry();
         }}
         onSelect={handleSelect}
+        onNavigate={handleNavigate}
         onCreate={handleCreate}
         onRename={handleRename}
         onDelete={handleDelete}

@@ -12,6 +12,8 @@ export interface ContextRailProps {
   /** Lower cased names of the active notes. */
   noteNames: ReadonlySet<string>;
   onSelect(id: string): void;
+  /** Opens a note from a backlink, whose button the navigation replaces. */
+  onNavigate(id: string): void;
   onWikiLink(target: string): void;
 }
 
@@ -21,6 +23,7 @@ export default function ContextRail({
   graph,
   noteNames,
   onSelect,
+  onNavigate,
   onWikiLink,
 }: ContextRailProps) {
   const links = useMemo(() => (note ? parseNote(note.body).links : []), [note]);
@@ -56,7 +59,7 @@ export default function ContextRail({
                     <button
                       type="button"
                       className="context__item"
-                      onClick={() => onSelect(node.id)}
+                      onClick={() => onNavigate(node.id)}
                     >
                       {node.name}
                     </button>
