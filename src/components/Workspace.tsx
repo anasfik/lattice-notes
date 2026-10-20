@@ -1,4 +1,4 @@
-import type { ReactNode, RefObject } from 'react';
+import type { ChangeEvent, ReactNode, RefObject } from 'react';
 
 import { activeNotes } from '../domain/vault';
 import type { LocalGraph } from '../domain/vault';
@@ -6,6 +6,7 @@ import type { Vault } from '../domain/types';
 import ContextRail from './ContextRail';
 import Editor from './Editor';
 import Explorer from './Explorer';
+import type { FocusTarget } from './Explorer';
 import Preview from './Preview';
 import Search from './Search';
 
@@ -14,13 +15,14 @@ export interface WorkspaceProps {
   status: string;
   error: string | null;
   canUndo: boolean;
-  focusNote: { id: string } | null;
+  focusNote: FocusTarget | null;
   graph: LocalGraph | null;
   noteNames: ReadonlySet<string>;
   /** True while the graph still trails the vault. */
   graphPending?: boolean;
   searchInputRef?: RefObject<HTMLInputElement | null>;
   editorRef?: RefObject<HTMLTextAreaElement | null>;
+  fileInputRef?: RefObject<HTMLInputElement | null>;
   paletteTrigger?: ReactNode;
   onRetry(): void;
   onSelect(id: string): void;
@@ -34,12 +36,19 @@ export interface WorkspaceProps {
   onUndo(): void;
   onWikiLink(target: string): void;
   onAnnounce(message: string): void;
+  onImport(): void;
+  onExport(): void;
+  onImportFiles(event: ChangeEvent<HTMLInputElement>): void;
 }
 
 /**
  * The three pane shell: activity rail, explorer, editor with preview, and the
  * context rail. It owns the single polite live region and the persistent
  * storage warning; the app owns the data.
+ *
+ * The document order is rail, editor, context, notes, so the compact layout
+ * reads from top to bottom and the keyboard never travels backwards. The
+ * desktop places the notes list on the left with the grid areas.
  */
 export default function Workspace(props: WorkspaceProps) {
   const notes = activeNotes(props.vault);
@@ -60,30 +69,33 @@ export default function Workspace(props: WorkspaceProps) {
         >
           New
         </button>
-      </nav>
-
-      <aside className="workspace__explorer" aria-label="Notes">
-        <Explorer
-          notes={notes}
-          trashed={trashed}
-          activeNoteId={props.vault.activeNoteId}
-          focusNote={props.focusNote}
-          onSelect={props.onSelect}
-          onCreate={props.onCreate}
-          onRename={props.onRename}
-          onDelete={props.onDelete}
-          onRestore={props.onRestore}
-          tools={
-            <Search
-              vault={props.vault}
-              onSelect={props.onSelect}
-              onAnnounce={props.onAnnounce}
-              inputRef={props.searchInputRef}
-              action={props.paletteTrigger}
-            />
-          }
+        <button
+          type="button"
+          className="workspace__rail-action"
+          aria-label="Import Markdown"
+          title="Import Markdown"
+          onClick={props.onImport}
+        >
+          Import
+        </button>
+        <button
+          type="button"
+          className="workspace__rail-action"
+          aria-label="Export vault"
+          title="Export vault"
+          onClick={props.onExport}
+        >
+          Export
+        </button>
+        <input
+          ref={props.fileInputRef}
+          type="file"
+          multiple
+          accept=".md,.markdown,.txt,.json"
+          className="workspace__file-input"
+          onChange={props.onImportFiles}
         />
-      </aside>
+      </nav>
 
       <main className="workspace__main" aria-label="Note workspace">
         <div className="workspace__statusbar">
@@ -115,6 +127,29 @@ export default function Workspace(props: WorkspaceProps) {
           />
         </div>
       </main>
+
+      <aside className="workspace__explorer" aria-label="Notes">
+        <Explorer
+          notes={notes}
+          trashed={trashed}
+          activeNoteId={props.vault.activeNoteId}
+          focusNote={props.focusNote}
+          onSelect={props.onSelect}
+          onCreate={props.onCreate}
+          onRename={props.onRename}
+          onDelete={props.onDelete}
+          onRestore={props.onRestore}
+          tools={
+            <Search
+              vault={props.vault}
+              onSelect={props.onSelect}
+              onAnnounce={props.onAnnounce}
+              inputRef={props.searchInputRef}
+              action={props.paletteTrigger}
+            />
+          }
+        />
+      </aside>
 
       <aside className="workspace__context" aria-label="Context">
         <ContextRail

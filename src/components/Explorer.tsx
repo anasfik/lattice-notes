@@ -2,12 +2,15 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import type { Note } from '../domain/types';
 
+/** Where the keyboard goes after a control that the navigation replaces. */
+export type FocusTarget = { kind: 'note'; id: string } | { kind: 'empty' };
+
 export interface ExplorerProps {
   notes: Note[];
   trashed: Note[];
   activeNoteId: string | null;
   /** Set by the app after a restore so the keyboard keeps its place. */
-  focusNote: { id: string } | null;
+  focusNote: FocusTarget | null;
   /** Controls that belong above the note list, such as the search field. */
   tools?: ReactNode;
   onSelect(id: string): void;
@@ -34,10 +37,16 @@ export default function Explorer({
   const [draft, setDraft] = useState('');
   const noteButtons = useRef(new Map<string, HTMLButtonElement>());
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const createButtonRef = useRef<HTMLButtonElement>(null);
   const returnFocusId = useRef<string | null>(null);
 
   useEffect(() => {
     if (!focusNote) return;
+    if (focusNote.kind === 'empty') {
+      // The last note is gone, so the empty state takes the keyboard.
+      createButtonRef.current?.focus();
+      return;
+    }
     noteButtons.current.get(focusNote.id)?.focus();
   }, [focusNote]);
 
@@ -84,7 +93,7 @@ export default function Explorer({
           <p className="explorer__empty-text">
             No notes yet. This vault lives in this browser only, and nothing leaves the device.
           </p>
-          <button type="button" className="explorer__create" onClick={onCreate}>
+          <button type="button" className="explorer__create" ref={createButtonRef} onClick={onCreate}>
             Create first note
           </button>
           {trashed.length > 0 ? (

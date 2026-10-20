@@ -160,6 +160,20 @@ function editorTextarea(): HTMLTextAreaElement {
   return found;
 }
 
+function fileInput(): HTMLInputElement {
+  const found = container.querySelector<HTMLInputElement>('input[type="file"]');
+  if (!found) throw new Error('no file input');
+  return found;
+}
+
+/** Hands a list of files to the import control. */
+async function selectFiles(input: HTMLInputElement, files: unknown[]): Promise<void> {
+  Object.defineProperty(input, 'files', { configurable: true, value: files });
+  await act(async () => {
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
 function searchInput(): HTMLInputElement {
   const found = container.querySelector<HTMLInputElement>('.search__input');
   if (!found) throw new Error('no search input');
@@ -234,6 +248,18 @@ async function sleep(ms: number): Promise<void> {
 }
 
 async function renderApp(): Promise<void> {
+  await act(async () => {
+    root.render(<App />);
+  });
+  await waitFor(() => container.querySelector('.workspace') !== null);
+}
+
+/** Unmounts the app and mounts it again on the same stored vault. */
+async function remountApp(): Promise<void> {
+  await act(async () => {
+    root.unmount();
+  });
+  root = createRoot(container);
   await act(async () => {
     root.render(<App />);
   });
@@ -471,6 +497,192 @@ describe('workspace shell', () => {
 
     await waitFor(() => statusText().includes('Saved to local storage'));
   });
+
+  it('explains the empty preview instead of showing a blank pane', async () => {
+    const created = createNote(createEmptyVault(), 'Empty', '');
+    await saveVault(created.vault);
+
+    await renderApp();
+
+    const body = container.querySelector('.preview__body');
+    expect(body?.children.length).toBeGreaterThan(0);
+    expect(body?.textContent).toContain('Nothing to preview yet');
+  });
+
+  it('keeps the document order in step with the compact screen order', async () => {
+    await renderApp();
+
+    const order = Array.from(container.querySelector('.workspace')?.children ?? []).map(
+      (child) => child.className,
+    );
+
+    expect(order).toEqual([
+      'workspace__rail',
+      'workspace__main',
+      'workspace__explorer',
+      'workspace__context',
+    ]);
+  });
+
+  it('restores the selected note after a remount', async () => {
+    await renderApp();
+
+    await click(buttonByName('Getting started'));
+    await waitFor(async () => {
+      const stored = await loadVault();
+      if (!stored) return false;
+      const selected = stored.notes.find((note) => note.name === 'Getting started');
+      return stored.activeNoteId === selected?.id;
+    });
+
+    await remountApp();
+
+    expect(editorTitle()).toBe('Getting started');
+  });
+
+  it('replaces the undo slot with the note of the second delete', async () => {
+    await renderApp();
+
+    await click(buttonByName('Delete Welcome to Lattice Notes'));
+    expect(statusText()).toContain('Deleted Welcome to Lattice Notes');
+
+    await click(buttonByName('Delete Getting started'));
+    expect(statusText()).toContain('Deleted Getting started');
+
+    await click(buttonByName('Undo delete'));
+
+    expect(noteNames()).toContain('Getting started');
+    expect(noteNames()).not.toContain('Welcome to Lattice Notes');
+  });
+});
+
+describe('import and export', () => {
+  it('imports a Markdown file as a new note and keeps the existing notes', async () => {
+    await renderApp();
+    const before = noteNames();
+
+    await selectFiles(fileInput(), [
+      new File(['# imported body'], 'notes.md', { type: 'text/markdown' }),
+    ]);
+
+    expect(noteNames()).toContain('notes');
+    expect(noteNames()).toEqual(expect.arrayContaining(before));
+    expect(statusText()).toContain('Imported 1 note');
+  });
+
+  it('skips a file that is neither Markdown nor an envelope', async () => {
+    await renderApp();
+
+    await selectFiles(fileInput(), [
+      new File(['binary'], 'picture.pdf', { type: 'application/pdf' }),
+    ]);
+
+    expect(statusText()).toContain('unsupported type');
+    expect(statusText()).toContain('picture.pdf');
+    expect(noteNames()).not.toContain('picture.pdf');
+  });
+
+  it('skips a Markdown file over the size limit without reading it', async () => {
+    await renderApp();
+
+    await selectFiles(fileInput(), [
+      new File(['x'.repeat(1_048_577)], 'big.md', { type: 'text/markdown' }),
+    ]);
+
+    expect(statusText()).toContain('too large');
+    expect(noteNames()).not.toContain('big');
+  });
+
+  it('merges into the vault that is current when the files were read', async () => {
+    await renderApp();
+
+    let release: (text: string) => void = () => {};
+    const slow = {
+      name: 'notes.md',
+      size: 12,
+      text: () =>
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+    };
+    await selectFiles(fileInput(), [slow]);
+
+    await fill(editorTextarea(), 'written while the file was read');
+
+    release('# imported');
+    await waitFor(() => statusText().includes('Imported 1 note'));
+
+    expect(editorTextarea().value).toBe('written while the file was read');
+    expect(noteNames()).toContain('notes');
+  });
+
+  it('reports a malformed envelope as an error and leaves the vault unchanged', async () => {
+    await renderApp();
+    const before = noteNames();
+
+    await selectFiles(fileInput(), [
+      new File(['not json at all'], 'vault.json', { type: 'application/json' }),
+    ]);
+
+    expect(alertText()).toContain('import failed');
+    expect(noteNames()).toEqual(before);
+  });
+
+  it('exports the vault of this tab as a JSON file', async () => {
+    await renderApp();
+
+    const blobs: Blob[] = [];
+    const revoked: string[] = [];
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: (blob: Blob) => {
+        blobs.push(blob);
+        return 'blob:lattice-notes/vault';
+      },
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: (url: string) => {
+        revoked.push(url);
+      },
+    });
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    try {
+      await click(buttonByName('Export vault'));
+
+      expect(blobs).toHaveLength(1);
+      expect(blobs[0]?.type).toBe('application/json');
+      const envelope = JSON.parse(await (blobs[0] as Blob).text()) as {
+        app: string;
+        notes: { name: string }[];
+      };
+      expect(envelope.app).toBe('lattice-notes');
+      expect(envelope.notes.map((note) => note.name)).toEqual([...noteNames()].sort());
+
+      expect(anchorClick).toHaveBeenCalledTimes(1);
+      const anchor = anchorClick.mock.instances[0] as HTMLAnchorElement;
+      expect(anchor.download).toBe('lattice-notes-vault.json');
+
+      await waitFor(() => revoked.length === 1);
+      expect(revoked).toEqual(['blob:lattice-notes/vault']);
+    } finally {
+      anchorClick.mockRestore();
+      Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: originalCreate });
+      Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevoke });
+    }
+  });
+
+  it('keeps the export control reachable while the storage banner is showing', async () => {
+    vi.stubGlobal('indexedDB', undefined);
+
+    await renderApp();
+
+    expect(alertText()).toContain('Local storage');
+    expect(buttonByName('Export vault')).not.toBeNull();
+  });
 });
 
 describe('keyboard focus', () => {
@@ -506,6 +718,17 @@ describe('keyboard focus', () => {
     await click(buttonByName('Delete Welcome to Lattice Notes'));
 
     expect(document.activeElement?.textContent).toBe('Getting started');
+  });
+
+  it('moves focus to the empty state after the last note is deleted', async () => {
+    const created = createNote(createEmptyVault(), 'Only note');
+    await saveVault(created.vault);
+    await renderApp();
+
+    await click(buttonByName('Delete Only note'));
+
+    expect(document.activeElement).toBe(buttonByName('Create first note'));
+    expect(document.activeElement).not.toBe(document.body);
   });
 
   it('keeps the keyboard in the note list when a note is opened', async () => {
@@ -564,6 +787,38 @@ describe('unreadable storage', () => {
 
     expect((await readRawDocument()).version).toBe(2);
     expect(alertText()).toContain('Local storage');
+  });
+
+  it('refuses to write an empty tab over the unreadable vault', async () => {
+    await storeUnreadableDocument();
+
+    await renderApp();
+    await click(buttonByName('Retry'));
+    await waitFor(() => alertText().includes('replaces the unreadable vault'));
+
+    await click(buttonByName('Retry'));
+
+    await waitFor(() => alertText().includes('no notes'));
+    expect((await readRawDocument()).version).toBe(2);
+  });
+
+  it('refuses to overwrite a vault that became readable again', async () => {
+    await storeUnreadableDocument();
+
+    await renderApp();
+    await click(buttonByName('Create first note'));
+    await click(buttonByName('Retry'));
+    await waitFor(() => alertText().includes('replaces the unreadable vault'));
+
+    const recovered = createNote(createEmptyVault(), 'Recovered note');
+    await writeRawDocument({ version: 1, vault: recovered.vault });
+
+    await click(buttonByName('Retry'));
+
+    await waitFor(() => alertText().includes('readable again'));
+    const stored = await readRawDocument();
+    expect(stored.version).toBe(1);
+    expect(stored.vault.notes.map((note) => note.name)).toEqual(['Recovered note']);
   });
 });
 

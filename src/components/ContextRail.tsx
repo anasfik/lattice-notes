@@ -4,7 +4,10 @@ import { parseNote, toPlainText } from '../domain/markdown';
 import { normalizeNoteName } from '../domain/vault';
 import type { LocalGraph } from '../domain/vault';
 import type { Note } from '../domain/types';
-import Graph, { GRAPH_PENDING_TEXT } from './Graph';
+import Graph from './Graph';
+
+/** Shown while the graph trails the vault, so no false empty state appears. */
+export const GRAPH_PENDING_TEXT = 'Updating links…';
 
 export interface ContextRailProps {
   note: Note | null;
@@ -53,8 +56,10 @@ export default function ContextRail({
             <dd>{formatTimestamp(note.updatedAt)}</dd>
           </dl>
 
-          <nav className="context__section" aria-label="Backlinks">
-            <h3 className="context__heading">Backlinks ({backlinks.length})</h3>
+          <nav className="context__section" aria-label="Backlinks" aria-busy={graphPending}>
+            <h3 className="context__heading">
+              {graphPending ? 'Backlinks' : `Backlinks (${backlinks.length})`}
+            </h3>
             {backlinks.length > 0 ? (
               <ul className="context__list" role="list">
                 {backlinks.map((node) => (
@@ -110,7 +115,6 @@ export default function ContextRail({
               graph={graph ?? { activeId: '', nodes: [], edges: [], backlinks: [] }}
               onSelect={onSelect}
               onNavigate={onNavigate}
-              graphPending={graphPending}
             />
           </section>
         </>

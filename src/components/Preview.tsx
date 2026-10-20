@@ -34,7 +34,13 @@ export default function Preview({ body, onWikiLink, existingNames }: PreviewProp
         Preview
       </h2>
       <div className="preview__body">
-        {parsed.blocks.map((block, index) => renderBlock(block, index, context))}
+        {parsed.blocks.length === 0 ? (
+          <p className="preview__empty">
+            Nothing to preview yet. It follows the Markdown you write in the editor.
+          </p>
+        ) : (
+          parsed.blocks.map((block, index) => renderBlock(block, index, context))
+        )}
       </div>
     </section>
   );

@@ -8,18 +8,18 @@ export interface GraphProps {
   onSelect(noteId: string): void;
   /** Selects a note and hands the keyboard to it, for the list that does not. */
   onNavigate(noteId: string): void;
-  /** True while the graph still trails the vault. */
-  graphPending?: boolean;
   /** Upper bound of drawn nodes, the active note included. */
   maxNodes?: number;
 }
 
 const DEFAULT_MAX_NODES = 48;
-const LABEL_LIMIT = 14;
+const LABEL_LIMIT = 18;
 const EMPTY_TEXT = 'No local connections yet. Add [[links]] to build the graph.';
-
-/** Shown while the graph trails the vault, so no false empty state appears. */
-export const GRAPH_PENDING_TEXT = 'Updating links…';
+/**
+ * The picture is drawn narrower than the domain layout, so the labels have
+ * room next to their node instead of running into the edge of the frame.
+ */
+const X_SCALE = 0.5;
 
 /**
  * The link neighbourhood of the active note.
@@ -33,7 +33,6 @@ export default function Graph({
   graph,
   onSelect,
   onNavigate,
-  graphPending = false,
   maxNodes = DEFAULT_MAX_NODES,
 }: GraphProps) {
   const baseId = useId();
@@ -67,7 +66,9 @@ export default function Graph({
   const neighbours = visible.filter((node) => !node.active);
 
   if (graph.nodes.length === 0) {
-    return <p className="graph__empty">{graphPending ? GRAPH_PENDING_TEXT : EMPTY_TEXT}</p>;
+    // An empty graph has no stale content to replace, so the pending
+    // message would only flicker on every keystroke.
+    return <p className="graph__empty">{EMPTY_TEXT}</p>;
   }
 
   const caption = `Local graph for ${active?.name ?? 'this note'}`;
@@ -78,7 +79,7 @@ export default function Graph({
         <figcaption className="graph__caption">{caption}</figcaption>
         <svg
           className="graph__svg"
-          viewBox="-175 -150 350 305"
+          viewBox="-150 -160 300 320"
           role="group"
           aria-labelledby={titleId}
         >
@@ -91,9 +92,9 @@ export default function Graph({
               <line
                 key={`${edge.source}-${edge.target}-${index}`}
                 className="graph__edge"
-                x1={source.x}
+                x1={source.x * X_SCALE}
                 y1={source.y}
-                x2={target.x}
+                x2={target.x * X_SCALE}
                 y2={target.y}
                 aria-hidden="true"
                 focusable="false"
@@ -118,15 +119,15 @@ export default function Graph({
               {node.active ? (
                 <circle
                   className="graph__pulse"
-                  cx={node.x}
+                  cx={node.x * X_SCALE}
                   cy={node.y}
                   r={16}
                   aria-hidden="true"
                   focusable="false"
                 />
               ) : null}
-              <circle className="graph__node-dot" cx={node.x} cy={node.y} r={9} />
-              <text className="graph__node-label" x={node.x} y={node.y + 30}>
+              <circle className="graph__node-dot" cx={node.x * X_SCALE} cy={node.y} r={9} />
+              <text className="graph__node-label" x={node.x * X_SCALE} y={node.y + 30}>
                 {shorten(node.name)}
               </text>
             </g>
@@ -148,7 +149,7 @@ export default function Graph({
           ))}
         </ul>
       ) : (
-        <p className="graph__empty">{graphPending ? GRAPH_PENDING_TEXT : EMPTY_TEXT}</p>
+        <p className="graph__empty">{EMPTY_TEXT}</p>
       )}
 
       {visible.length < graph.nodes.length ? (
@@ -160,10 +161,17 @@ export default function Graph({
   );
 }
 
-/** The accessible name of a node: its name, its degree, and the current note. */
+/**
+ * The accessible name of a node: its name, its degree, and the current note.
+ *
+ * A truncated label is the visible text, so it has to be part of the
+ * accessible name as well (WCAG 2.5.3, Label in Name).
+ */
 function describe(node: GraphNode): string {
   const links = `${node.degree} connection${node.degree === 1 ? '' : 's'}`;
-  return `${node.name}, ${links}${node.active ? ', current note' : ''}`;
+  const visible = shorten(node.name);
+  const name = visible === node.name ? node.name : `${visible}, ${node.name}`;
+  return `${name}, ${links}${node.active ? ', current note' : ''}`;
 }
 
 function shorten(name: string): string {

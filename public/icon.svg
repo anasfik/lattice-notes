@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Lattice Notes">
+  <title>Lattice Notes</title>
+  <rect width="512" height="512" rx="112" fill="#101215" />
+  <g stroke="#6a7382" stroke-width="12" stroke-linecap="round" opacity="0.85" fill="none">
+    <path d="M128 128H384M128 256H384M128 384H384M128 128V384M256 128V384M384 128V384" />
+  </g>
+  <g fill="#f4f1ea">
+    <circle cx="128" cy="128" r="24" />
+    <circle cx="256" cy="128" r="24" />
+    <circle cx="384" cy="128" r="24" />
+    <circle cx="128" cy="256" r="24" />
+    <circle cx="384" cy="256" r="24" />
+    <circle cx="128" cy="384" r="24" />
+    <circle cx="256" cy="384" r="24" />
+    <circle cx="384" cy="384" r="24" />
+  </g>
+  <circle cx="256" cy="256" r="34" fill="#a78bfa" />
+</svg>

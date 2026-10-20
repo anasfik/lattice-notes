@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import type { ChangeEvent } from 'react';
 
 import {
   activeNotes,
@@ -19,12 +20,32 @@ import {
   restoreNote,
   updateNoteBody,
 } from './domain/vault';
+import {
+  MAX_ENVELOPE_BYTES,
+  MAX_IMPORT_FILES,
+  MAX_IMPORT_FILE_BYTES,
+  importEnvelope,
+  importMarkdownFiles,
+  serializeVault,
+} from './domain/transfer';
+import type { ImportSkip, SkipReason } from './domain/transfer';
 import type { Vault } from './domain/types';
 import { createSeedVault, loadVault, saveVault } from './storage/vaultRepository';
 import CommandPalette from './components/CommandPalette';
 import Workspace from './components/Workspace';
+import type { FocusTarget } from './components/Explorer';
 
 const SAVE_DEBOUNCE_MS = 200;
+
+/** The Markdown extensions the import accepts, without the dot. */
+const MARKDOWN_EXTENSIONS = ['md', 'markdown', 'txt'];
+
+const SKIP_REASONS: Record<SkipReason, string> = {
+  'unsupported-type': 'unsupported type',
+  'too-large': 'too large',
+  'batch-limit': 'over the batch limit',
+  'unreadable-content': 'not readable',
+};
 
 type StorageMode = 'loading' | 'ready' | 'memory-only';
 
@@ -35,7 +56,7 @@ export default function App() {
   const [mode, setMode] = useState<StorageMode>('loading');
   const [retryKind, setRetryKind] = useState<'load' | 'save'>('load');
   const [undo, setUndo] = useState<{ id: string; name: string } | null>(null);
-  const [focusNote, setFocusNote] = useState<{ id: string } | null>(null);
+  const [focusNote, setFocusNote] = useState<FocusTarget | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   const vaultRef = useRef(vault);
@@ -45,6 +66,7 @@ export default function App() {
   const loadFailures = useRef(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   /** Applies the next vault to the state and to the ref the handlers read. */
   const applyVault = useCallback((next: Vault) => {
@@ -158,8 +180,11 @@ export default function App() {
     if (!note || next === current) return;
     applyVault(next);
     // The deleted row disappears with the focus on it, so the keyboard is
-    // handed to the note the vault selected instead.
-    if (next.activeNoteId) setFocusNote({ id: next.activeNoteId });
+    // handed to the note the vault selected, or to the empty state when the
+    // last note is gone.
+    setFocusNote(
+      next.activeNoteId ? { kind: 'note', id: next.activeNoteId } : { kind: 'empty' },
+    );
     setUndo({ id: note.id, name: note.name });
     setStatus(`Deleted ${note.name}`);
   }, [applyVault]);
@@ -168,7 +193,7 @@ export default function App() {
     const { vault: next, note } = restoreNote(vaultRef.current, id);
     if (!note) return false;
     applyVault({ ...next, activeNoteId: note.id });
-    setFocusNote({ id: note.id });
+    setFocusNote({ kind: 'note', id: note.id });
     setStatus(`Restored ${note.name}`);
     return true;
   }, [applyVault]);
@@ -177,6 +202,103 @@ export default function App() {
     if (!undo) return;
     if (handleRestore(undo.id)) setUndo(null);
   }, [handleRestore, undo]);
+
+  /** Opens the hidden file picker behind the visible import control. */
+  const handleImport = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  /**
+   * Reads the selected files and merges them into the vault.
+   *
+   * The files are read first and merged afterwards, so a note that was
+   * written while a file was being read is still there afterwards. The
+   * limits are checked on the file size before the content is read, so an
+   * oversized file is never pulled into memory.
+   */
+  const handleImportFiles = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const input = event.target;
+      const files = Array.from(input.files ?? []);
+      input.value = '';
+      if (files.length === 0) return;
+
+      const skipped: ImportSkip[] = [];
+      const envelopes: File[] = [];
+      const markdown: File[] = [];
+
+      for (const file of files) {
+        const name = file.name;
+        if (name.toLowerCase().endsWith('.json')) {
+          if (file.size > MAX_ENVELOPE_BYTES) {
+            skipped.push({ name, reason: 'too-large' });
+            continue;
+          }
+          envelopes.push(file);
+          continue;
+        }
+        if (!MARKDOWN_EXTENSIONS.includes(extensionOf(name))) {
+          skipped.push({ name, reason: 'unsupported-type' });
+          continue;
+        }
+        if (markdown.length >= MAX_IMPORT_FILES) {
+          skipped.push({ name, reason: 'batch-limit' });
+          continue;
+        }
+        if (file.size > MAX_IMPORT_FILE_BYTES) {
+          skipped.push({ name, reason: 'too-large' });
+          continue;
+        }
+        markdown.push(file);
+      }
+
+      const notes = await Promise.all(
+        markdown.map(async (file) => ({ name: stripExtension(file.name), text: await file.text() })),
+      );
+      const envelopesText = await Promise.all(envelopes.map(async (file) => await file.text()));
+
+      // The merge runs against the vault of this moment, not against a vault
+      // captured before the files were read.
+      let next = vaultRef.current;
+      let imported = 0;
+
+      try {
+        for (const json of envelopesText) {
+          const result = importEnvelope(next, json);
+          next = result.vault;
+          imported += result.report.imported;
+          skipped.push(...result.report.skipped);
+        }
+      } catch (error) {
+        // A broken envelope changes nothing: every note of the vault stays.
+        setError(`The import failed: ${errorMessage(error)}`);
+        return;
+      }
+
+      const result = importMarkdownFiles(next, notes);
+      imported += result.report.imported;
+      skipped.push(...result.report.skipped);
+
+      applyVault(result.vault);
+      setStatus(describeImport(imported, skipped));
+    },
+    [applyVault],
+  );
+
+  /** Writes the vault of this tab to a JSON file. The storage is not read. */
+  const handleExport = useCallback(() => {
+    const current = vaultRef.current;
+    const blob = new Blob([serializeVault(current)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'lattice-notes-vault.json';
+    anchor.click();
+    // The download reads the object URL after the click, so the URL is
+    // released on the next tick and not before.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    setStatus(`Exported ${activeNotes(current).length} notes`);
+  }, []);
 
   const handleWikiLink = useCallback(
     (target: string) => {
@@ -206,6 +328,38 @@ export default function App() {
 
   const handleRetry = useCallback(async () => {
     if (retryKind === 'save') {
+      if (mode === 'memory-only') {
+        // The recovery save may destroy the stored vault, so the store is
+        // read again first and the write only happens when it is the only
+        // way out.
+        try {
+          const stored = await loadVault();
+          if (stored !== null) {
+            if (baseRef.current === vaultRef.current) {
+              // The tab changed nothing, so the stored vault is the truth.
+              applyVault(stored);
+              baseRef.current = stored;
+              setMode('ready');
+              setError(null);
+              setStatus('Local vault restored');
+            } else {
+              setError(
+                'Local storage is readable again. Export the notes of this tab, then reload the page to use the stored vault.',
+              );
+            }
+            return;
+          }
+        } catch {
+          // The document is still unreadable: the explicit replacement below
+          // is the only way out.
+        }
+        if (vaultRef.current.notes.length === 0) {
+          setError(
+            'This tab has no notes to save. Create or import a note before replacing the unreadable vault.',
+          );
+          return;
+        }
+      }
       await save(vaultRef.current);
       return;
     }
@@ -238,7 +392,7 @@ export default function App() {
       }
       setError('Local storage could not be read, so this session runs in memory only. Notes are not saved yet.');
     }
-  }, [applyVault, retryKind, save]);
+  }, [applyVault, mode, retryKind, save]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -330,6 +484,10 @@ export default function App() {
         onUndo={handleUndo}
         onWikiLink={handleWikiLink}
         onAnnounce={announce}
+        onImport={handleImport}
+        onExport={handleExport}
+        onImportFiles={handleImportFiles}
+        fileInputRef={fileInputRef}
       />
       <CommandPalette
         open={paletteOpen}
@@ -342,4 +500,32 @@ export default function App() {
       />
     </>
   );
+}
+
+/** The lower case extension of a file name, without the dot. */
+function extensionOf(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot < 0 ? '' : name.slice(dot + 1).toLowerCase();
+}
+
+/** The note name of an imported Markdown file, without its extension. */
+function stripExtension(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot <= 0 ? name : name.slice(0, dot);
+}
+
+/** The one line summary of an import, for the polite live region. */
+function describeImport(imported: number, skipped: ImportSkip[]): string {
+  const parts = [`Imported ${imported} ${imported === 1 ? 'note' : 'notes'}`];
+  if (skipped.length > 0) {
+    const list = skipped
+      .map((entry) => `${entry.name} (${SKIP_REASONS[entry.reason]})`)
+      .join(', ');
+    parts.push(`skipped ${skipped.length}: ${list}`);
+  }
+  return parts.join(', ');
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'the file could not be read.';
 }

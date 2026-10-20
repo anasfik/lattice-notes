@@ -145,19 +145,31 @@ describe('local graph', () => {
     expect(container.querySelector('.graph__empty')?.textContent).toContain('No local connections yet');
   });
 
-  it('shows a pending state instead of the empty state while the graph is behind', async () => {
+  it('shows the empty state for a note without connections', async () => {
     await render(
       <Graph
-        graph={{ activeId: '', nodes: [], edges: [], backlinks: [] }}
+        graph={{ activeId: 'a', nodes: [graphNode('a', 'Alpha', 0, 0, 0, true)], edges: [], backlinks: [] }}
         onSelect={() => {}}
         onNavigate={() => {}}
-        graphPending
       />,
     );
 
-    const empty = container.querySelector('.graph__empty')?.textContent ?? '';
-    expect(empty).toContain('Updating links');
-    expect(empty).not.toContain('No local connections yet');
+    expect(container.querySelector('.graph__empty')?.textContent).toContain('No local connections yet');
+  });
+
+  it('keeps a long title readable by truncating it late', async () => {
+    const name = 'A note title that is longer than the label';
+    await render(
+      <Graph
+        graph={{ activeId: 'a', nodes: [graphNode('a', name, 0, 0, 0, true)], edges: [], backlinks: [] }}
+        onSelect={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+
+    const label = container.querySelector('.graph__node-label')?.textContent ?? '';
+    expect(label).toHaveLength(18);
+    expect(label.endsWith('…')).toBe(true);
   });
 
   it('caps the picture at 48 nodes and keeps the backlinks', async () => {

@@ -8,6 +8,8 @@
 
    Contrast (WCAG 2.2 AA) against the surfaces below:
      ink on bg 16.6:1, ink-muted on bg 8.3:1, accent on bg 6.9:1,
+     ink-faint on bg 5.5:1, on surface 5.2:1, on surface-raised 4.7:1,
+     on surface-sunken 5.8:1 (body text floor 4.5:1),
      border-strong on surface 3.6:1 and on surface-raised 3.4:1 (UI
      boundaries), focus ring on bg 6.9:1. --color-border is decorative
      separation only and never carries meaning on its own.
@@ -48,7 +50,7 @@
   --color-border-strong: #6a7382;
   --color-ink: #f4f1ea;
   --color-ink-muted: #a8adb7;
-  --color-ink-faint: #7b8290;
+  --color-ink-faint: #848c9b;
   --color-accent: #a78bfa;
   --color-accent-ink: #14101f;
   --color-focus: #a78bfa;
@@ -176,6 +178,7 @@ a {
 .workspace {
   display: grid;
   grid-template-columns: var(--rail-width) var(--explorer-width) minmax(0, 1fr) var(--context-rail-width);
+  grid-template-areas: 'rail explorer main context';
   height: 100vh;
   height: 100dvh;
   background: var(--color-bg);
@@ -183,6 +186,7 @@ a {
 }
 
 .workspace__rail {
+  grid-area: rail;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -202,8 +206,9 @@ a {
 .workspace__rail-action {
   display: grid;
   place-content: center;
-  width: var(--touch-target);
+  min-width: var(--touch-target);
   height: var(--touch-target);
+  padding: 0 var(--space-1);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   line-height: 1;
@@ -214,7 +219,13 @@ a {
   cursor: pointer;
 }
 
+/* The file picker lives behind the visible import control. */
+.workspace__file-input {
+  display: none;
+}
+
 .workspace__explorer {
+  grid-area: explorer;
   display: flex;
   min-width: 0;
   background: var(--color-surface);
@@ -223,6 +234,7 @@ a {
 }
 
 .workspace__main {
+  grid-area: main;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -291,6 +303,7 @@ a {
 }
 
 .workspace__context {
+  grid-area: context;
   min-width: 0;
   background: var(--color-surface);
   border-left: var(--border-width) solid var(--color-border);
@@ -627,6 +640,11 @@ a {
   overflow-wrap: anywhere;
 }
 
+.preview__empty {
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
+
 .preview__body > * + * {
   margin-top: var(--space-3);
 }
@@ -872,7 +890,7 @@ a {
   width: 100%;
   max-width: 100%;
   height: auto;
-  max-height: 16rem;
+  max-height: 18rem;
   display: block;
   background: var(--color-surface-sunken);
   border: var(--border-width) solid var(--color-border);
@@ -907,7 +925,7 @@ a {
 .graph__node-label {
   fill: var(--color-ink-muted);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 15px;
   text-anchor: middle;
 }
 
@@ -989,12 +1007,12 @@ a {
 @media (max-width: 48rem) {
   .workspace {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'rail' 'main' 'explorer' 'context';
     height: auto;
     min-height: 100dvh;
   }
 
   .workspace__rail {
-    order: 0;
     flex-direction: row;
     justify-content: space-between;
     padding: var(--space-2) var(--space-3);
@@ -1003,12 +1021,10 @@ a {
   }
 
   .workspace__main {
-    order: 1;
     overflow: visible;
   }
 
   .workspace__explorer {
-    order: 2;
     overflow: visible;
     border-right: 0;
     border-top: var(--border-width) solid var(--color-border);
@@ -1024,7 +1040,6 @@ a {
   }
 
   .workspace__context {
-    order: 3;
     border-left: 0;
     border-top: var(--border-width) solid var(--color-border);
   }
