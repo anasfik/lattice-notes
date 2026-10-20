@@ -1223,7 +1223,7 @@ export default function App() {
       <Workspace
         vault={vault}
         status={status}
-        error={error}
+        error={managerOpen ? null : error}
         importError={importError}
         canUndo={undo !== null}
         focusNote={focusNote}
@@ -1305,6 +1305,7 @@ export default function App() {
           open={managerOpen}
           catalog={catalog}
           activeVaultId={vaultId}
+          error={error}
           onClose={() => setManagerOpen(false)}
           onOpen={(id) => {
             void switchVault(id);

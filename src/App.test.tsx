@@ -2380,6 +2380,25 @@ describe('guarded vault lifecycle', () => {
 });
 
 describe('vault manager', () => {
+  it('shows a failed operation inside the open manager and keeps recovery after closing', async () => {
+    await renderLegacyApp();
+    const second = await storeSecondVault();
+    storage.readFailures.set(second, 1);
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+
+    await waitFor(() => alertText().includes('could not be opened'));
+    const manager = container.querySelector('dialog.vaults');
+    expect(manager?.querySelector('[role="alert"]')?.textContent).toContain('could not be opened');
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
+    expect(noteTitle()).toBe('Welcome to Lattice Notes');
+
+    await click(container.querySelector('dialog.vaults .vaults__done') as Element);
+    expect(container.querySelector('.workspace__warning')?.textContent).toContain('could not be opened');
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
+  });
+
   it('opens the manager from the name of the open vault', async () => {
     await renderLegacyApp();
     await storeSecondVault();

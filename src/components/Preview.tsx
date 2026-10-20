@@ -43,7 +43,9 @@ export default function Preview({
       className="preview"
       aria-labelledby="preview-title"
       ref={contentRef}
-      tabIndex={-1}
+      // A rendered note can be taller than the screen, so the region that
+      // scrolls must also be reachable with the keyboard (WCAG 2.1.1).
+      tabIndex={0}
       hidden={hidden}
     >
       <h2 className="preview__title" id="preview-title">

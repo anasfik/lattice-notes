@@ -534,6 +534,10 @@ a {
   accent-color: var(--color-accent);
   margin: 0;
   font: inherit;
+  /* WCAG 2.5.8: the radio itself must clear the 24px minimum target, since
+     the header can wrap at 320px and take away the spacing exception. */
+  min-height: 1.5rem;
+  min-width: 1.5rem;
 }
 
 .workspace__mode:has(input:checked) {
@@ -1765,6 +1769,12 @@ a {
   margin: 0;
   display: grid;
   gap: var(--space-2);
+}
+
+.vaults__error {
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
 }
 
 .vaults__item {

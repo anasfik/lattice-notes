@@ -8,6 +8,8 @@ export interface VaultManagerProps {
   catalog: VaultCatalog;
   /** The vault that is on the screen. */
   activeVaultId: string;
+  /** Operation failures must remain visible in the modal top layer. */
+  error?: string | null;
   onClose(): void;
   onOpen(id: string): void;
   onRename(id: string, name: string): void;
@@ -28,6 +30,7 @@ export default function VaultManager({
   open,
   catalog,
   activeVaultId,
+  error,
   onClose,
   onOpen,
   onRename,
@@ -104,6 +107,8 @@ export default function VaultManager({
         Every vault of this browser lives in the same local storage. Archiving keeps the notes and can be
         undone.
       </p>
+
+      {open && error ? <p className="vaults__error" role="alert">{error}</p> : null}
 
       <ul className="vaults__list" role="list">
         {catalog.vaults.map((member) => {

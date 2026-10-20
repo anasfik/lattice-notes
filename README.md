@@ -4,8 +4,11 @@ A local-first Markdown workspace that runs entirely in the browser. Notes are
 plain Markdown, they live in this browser's IndexedDB, and nothing is uploaded
 anywhere: no account, no server, no telemetry.
 
-- Linked notes with `[[wiki links]]`, backlinks, and a local link graph
-- Full text search over titles and bodies
+- Named browser-local vaults, first-use setup, and reversible vault archiving
+- Linked notes with `[[wiki links]]`, backlinks, and contextual and fullscreen graphs
+- Write, Split and Read modes with open-note tabs
+- Full text search, a command palette, and a popup note switcher
+- Local-date daily notes and a keyboard-operated calendar
 - Import from Markdown files and export to a readable JSON envelope
 - Installable, offline capable: the app shell is precached by a service worker
 
@@ -15,13 +18,37 @@ anywhere: no account, no server, no telemetry.
 |---|---|---|
 | UI | React 19 + TypeScript, built by Vite | browser |
 | Notes | Plain Markdown text | browser |
-| Storage | One versioned document in IndexedDB (`lattice-notes` / `vault` / `current`) | browser |
+| Storage | IndexedDB (`lattice-notes` / `vault`): catalog, keyed vault documents and per-vault tab sessions | browser |
 | Offline shell | A hand written service worker with a build time precache list | browser |
 
 The whole application is static files. There is no backend, no API key and no
 account. The vault is written to IndexedDB about 200 ms after the last edit.
 If IndexedDB cannot be read, the app keeps working in memory and shows a
 warning instead of overwriting anything.
+
+Existing single-vault users keep their original `current` document; migration
+only adds catalog metadata. New vaults use `vault:<id>`, tab sessions use
+`session:<id>`, and content and session changes are committed together.
+
+## Using the workspace
+
+On first use, name a vault and start empty, use example notes, or restore a JSON
+backup. The **Vaults** control switches, creates, renames, archives and restores
+vaults. Archiving hides a vault; it does not delete its notes. Open another vault
+before archiving the active one.
+
+- **Ctrl/Cmd+K** opens supported commands; **Ctrl/Cmd+P** opens note search.
+- Closing a note tab does not delete the note. Closing the final tab leaves no
+  note selected, including after a reload.
+- **Daily note** opens today's `YYYY-MM-DD` note using your local date. Calendar
+  days reuse existing daily notes instead of duplicating them.
+- The fullscreen **Graph** supports 2D/3D, orbit/pan, zoom, Fit and Reset. Focus
+  its picture for arrow keys, `+`/`−`, `0` and `f`; Escape closes it. The picture
+  draws at most 300 notes, including the selected note. The searchable list
+  reaches every note in pages of 50. Search filters that list, not the picture.
+- **Files → Export vault** downloads the visible vault. Keep backups: clearing
+  browser site data, losing this browser profile, or changing origin does not
+  transfer your notes. This is browser storage, not access to a disk folder.
 
 ## Running it locally
 
@@ -136,6 +163,13 @@ two markers and writes `dist/sw.js`:
 - **The recovery path refuses to guess.** A retry re-reads the stored vault: it
   refuses to write over a vault that has become readable, and only replaces a
   still unreadable one after a second, explicitly warned retry.
+- **A corrupt catalog is not reset automatically.** Retry and in-memory export
+  remain available; automatic catalog repair is deliberately not implemented.
+- **No sync, plugins or filesystem vaults.** Import/export are the portable
+  boundary. This is an original browser workspace, not full application parity.
+
+See the [workspace acceptance record](docs/verification/2026-10-20-workspace.md)
+for tested workflows, browser evidence and remaining limitations.
 
 ## Reference material
 
