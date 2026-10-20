@@ -6,8 +6,9 @@
  * mutation of the vault it is given.
  */
 
-import { activeNotes, createNote } from './vault';
-import type { Note, Vault } from './types';
+import { activeNotes, createNotes } from './vault';
+import type { NoteDraft } from './vault';
+import type { Vault } from './types';
 
 /** Largest Markdown file that is imported as a single note (1 MiB). */
 export const MAX_IMPORT_FILE_BYTES = 1_048_576;
@@ -60,7 +61,7 @@ export function serializeVault(vault: Vault): string {
 
 /**
  * Reads an envelope into a fresh vault. Throws when the envelope itself is
- * unusable; a note entry that is not a valid note is reported as such.
+ * unusable, and when any note entry is not a valid note.
  */
 export function deserializeVault(json: string): Vault {
   const parsed = parseEnvelope(json);
@@ -73,15 +74,12 @@ export function deserializeVault(json: string): Vault {
 /** Merges an envelope into a vault without overwriting an existing note. */
 export function importEnvelope(vault: Vault, json: string): ImportResult {
   const parsed = parseEnvelope(json);
-  let next = vault;
-  let imported = 0;
+  const created = createNotes(vault, parsed.notes);
 
-  for (const note of parsed.notes) {
-    next = addNote(next, note).vault;
-    imported += 1;
-  }
-
-  return { vault: withSelection(next), report: { imported, skipped: parsed.invalid } };
+  return {
+    vault: withSelection(created.vault),
+    report: { imported: created.notes.length, skipped: parsed.invalid },
+  };
 }
 
 /** Merges Markdown files into a vault as one note per file. */
@@ -90,8 +88,7 @@ export function importMarkdownFiles(
   files: ReadonlyArray<{ name: string; text: string }>,
 ): ImportResult {
   const skipped: ImportSkip[] = [];
-  let next = vault;
-  let imported = 0;
+  const drafts: NoteDraft[] = [];
   const now = Date.now();
 
   files.forEach((file, index) => {
@@ -107,11 +104,15 @@ export function importMarkdownFiles(
       skipped.push({ name: file.name, reason: 'unreadable-content' });
       return;
     }
-    next = addNote(next, { name: file.name, body: file.text, createdAt: now, updatedAt: now }).vault;
-    imported += 1;
+    drafts.push({ name: file.name, body: file.text, createdAt: now, updatedAt: now });
   });
 
-  return { vault: withSelection(next), report: { imported, skipped } };
+  const created = createNotes(vault, drafts);
+
+  return {
+    vault: withSelection(created.vault),
+    report: { imported: created.notes.length, skipped },
+  };
 }
 
 /**
@@ -155,30 +156,18 @@ function parseEnvelope(json: string): { notes: ParsedNote[]; invalid: ImportSkip
   return { notes, invalid };
 }
 
-/** Adds a note to a vault with a fresh id and the existing unique name path. */
-function addNote(vault: Vault, parsed: ParsedNote): { vault: Vault; note: Note } {
-  const created = createNote(vault, parsed.name, parsed.body);
-  const note: Note = { ...created.note, createdAt: parsed.createdAt, updatedAt: parsed.updatedAt };
-  return {
-    vault: {
-      ...created.vault,
-      notes: created.vault.notes.map((entry) => (entry.id === note.id ? note : entry)),
-    },
-    note,
-  };
-}
-
 /** Keeps the current selection when it still exists, otherwise selects the first note. */
 function withSelection(vault: Vault): Vault {
   const kept =
-    vault.activeNoteId !== null && vault.notes.some((note) => note.id === vault.activeNoteId);
-  return { ...vault, activeNoteId: kept ? vault.activeNoteId : (vault.notes[0]?.id ?? null) };
+    vault.activeNoteId !== null &&
+    vault.notes.some((note) => note.id === vault.activeNoteId && note.deletedAt === null);
+  if (kept) return vault;
+
+  return { ...vault, activeNoteId: activeNotes(vault)[0]?.id ?? null };
 }
 
 function buildVault(notes: ParsedNote[]): Vault {
-  let vault: Vault = { notes: [], activeNoteId: null };
-  for (const parsed of notes) vault = addNote(vault, parsed).vault;
-  return withSelection(vault);
+  return withSelection(createNotes({ notes: [], activeNoteId: null }, notes).vault);
 }
 
 function exceedsEnvelopeLimit(json: string): boolean {

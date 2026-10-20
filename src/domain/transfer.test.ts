@@ -14,6 +14,14 @@ import type { Note, Vault } from './types';
 const CREATED = 1_700_000_000_000;
 const CREATED_ISO = new Date(CREATED).toISOString();
 
+/**
+ * Wall clock budget for merging a 5000 note envelope. The quadratic
+ * implementation needed several seconds for the same merge; the linear one
+ * needs a few milliseconds. The bound sits far above the linear cost and far
+ * below the quadratic cost.
+ */
+const MERGE_TIME_BUDGET_MS = 500;
+
 function note(name: string, body: string, overrides: Partial<Note> = {}): Note {
   return {
     id: `id-${name}`,
@@ -72,10 +80,18 @@ describe('deserializeVault', () => {
   });
 
   it('gives every imported note a fresh id and selects the first one', () => {
-    const vault = deserializeVault(envelope([{ name: 'Alpha', body: '# alpha' }]));
+    const vault = deserializeVault(
+      envelope([
+        { name: 'Alpha', body: '# alpha' },
+        { name: 'Beta', body: '# beta' },
+      ]),
+    );
 
-    expect(vault.notes[0]?.id).not.toBe('id-Alpha');
-    expect(vault.notes[0]?.id).toBeTruthy();
+    const ids = vault.notes.map((entry) => entry.id);
+    expect(ids[0]).toBeTruthy();
+    expect(ids[1]).toBeTruthy();
+    expect(ids[0]).not.toBe(ids[1]);
+    expect(ids).not.toContain('id-Alpha');
     expect(vault.activeNoteId).toBe(vault.notes[0]?.id);
   });
 
@@ -201,7 +217,11 @@ describe('importMarkdownFiles', () => {
       { name: 'Huge.md', reason: 'too-large' },
       { name: 'Late.md', reason: 'batch-limit' },
     ]);
-    expect(result.vault.notes.map((entry) => entry.name)).toContain('Alpha.md');
+    expect(result.vault.notes).toHaveLength(result.report.imported);
+    const names = result.vault.notes.map((entry) => entry.name);
+    expect(names).toContain('Alpha.md');
+    expect(names).not.toContain('Huge.md');
+    expect(names).not.toContain('Late.md');
   });
 
   it('skips a file whose text is empty', () => {
@@ -239,5 +259,85 @@ describe('importMarkdownFiles', () => {
 
     expect(result.vault.notes[0]?.body).toBe('original');
     expect(result.vault.notes[1]?.name).toBe('Alpha.md 2');
+  });
+});
+
+describe('import performance', () => {
+  it('merges a 5000 note envelope inside the time budget', () => {
+    const notes = Array.from({ length: 5000 }, (_, index) => ({
+      name: index % 1000 === 0 ? 'Shared' : `Note ${index}`,
+      body: `# body ${index}`,
+    }));
+
+    const started = performance.now();
+    const result = importEnvelope(vaultOf(note('Existing', 'body')), envelope(notes));
+    const elapsed = performance.now() - started;
+
+    expect(result.report.imported).toBe(5000);
+    expect(result.vault.notes).toHaveLength(5001);
+    expect(elapsed).toBeLessThan(MERGE_TIME_BUDGET_MS);
+  });
+});
+
+describe('selection after an import', () => {
+  it('selects the imported note when the vault holds only trashed notes', () => {
+    const vault: Vault = { notes: [note('Trashed', 'gone', { deletedAt: CREATED })], activeNoteId: null };
+
+    const result = importMarkdownFiles(vault, [{ name: 'Fresh.md', text: '# fresh' }]);
+
+    const imported = result.vault.notes.find((entry) => entry.name === 'Fresh.md');
+    expect(result.vault.activeNoteId).toBe(imported?.id);
+    expect(result.vault.activeNoteId).not.toBe('id-Trashed');
+  });
+
+  it('never selects a trashed note, not even the one that was selected', () => {
+    const vault = vaultOf(note('Trashed', 'gone', { deletedAt: CREATED }));
+
+    const result = importMarkdownFiles(vault, [{ name: 'Fresh.md', text: '# fresh' }]);
+
+    const active = result.vault.notes.find((entry) => entry.id === result.vault.activeNoteId);
+    expect(active?.deletedAt).toBeNull();
+    expect(active?.name).toBe('Fresh.md');
+  });
+});
+
+describe('import naming parity', () => {
+  /**
+   * The naming rule as it was before the batch path existed: the set of taken
+   * names is rebuilt from scratch for every single note.
+   */
+  function oldNoteName(notes: Note[], desired: string): string {
+    const base = desired.replace(/\s+/g, ' ').trim() || 'Untitled';
+    const taken = new Set(
+      notes.filter((entry) => entry.deletedAt === null).map((entry) => entry.name.toLowerCase()),
+    );
+    if (!taken.has(base.toLowerCase())) return base;
+    let suffix = 2;
+    while (taken.has(`${base} ${suffix}`.toLowerCase())) suffix += 1;
+    return `${base} ${suffix}`;
+  }
+
+  it('names the imported notes exactly like the per note path did', () => {
+    const existing = vaultOf(
+      note('Alpha', 'original'),
+      note('Keeper', 'keep'),
+      note('Trashed', 'gone', { deletedAt: CREATED }),
+    );
+    const incoming = ['alpha', 'Alpha', 'Alpha 2', '   ', 'Trashed', 'Gamma', 'Keeper'];
+
+    const expected: string[] = [];
+    const grown = [...existing.notes];
+    for (const desired of incoming) {
+      const name = oldNoteName(grown, desired);
+      expected.push(name);
+      grown.push({ ...note(name, 'body'), deletedAt: null });
+    }
+
+    const result = importEnvelope(
+      existing,
+      envelope(incoming.map((name) => ({ name, body: 'body' }))),
+    );
+
+    expect(result.vault.notes.slice(existing.notes.length).map((entry) => entry.name)).toEqual(expected);
   });
 });

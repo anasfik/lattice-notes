@@ -60,17 +60,42 @@ export function activeNotes(vault: Vault): Note[] {
  * taken meanwhile.
  */
 export function uniqueNoteName(vault: Vault, desired: string, exceptId?: string): string {
+  return uniqueNoteNameIn(noteNameIndex(vault, exceptId), desired);
+}
+
+/**
+ * The lowercased names of the active notes, optionally leaving one note out.
+ * One index serves a whole batch, so naming a note no longer costs a pass
+ * over the vault.
+ */
+export function noteNameIndex(vault: Vault, exceptId?: string): Set<string> {
+  const taken = new Set<string>();
+  for (const note of vault.notes) {
+    if (note.deletedAt !== null || note.id === exceptId) continue;
+    taken.add(note.name.toLowerCase());
+  }
+  return taken;
+}
+
+/**
+ * A unique note name among the names in `taken`: the normalised name, or the
+ * default name for a blank one, with the `Name 2`, `Name 3`, ... suffix when
+ * the name is taken. The name that is handed out is added to `taken`, so a
+ * batch can be named in one pass.
+ */
+export function uniqueNoteNameIn(taken: Set<string>, desired: string): string {
   const base = normalizeNoteName(desired) || DEFAULT_NOTE_NAME;
-  const taken = new Set(
-    vault.notes
-      .filter((note) => note.deletedAt === null && note.id !== exceptId)
-      .map((note) => note.name.toLowerCase()),
-  );
-  if (!taken.has(base.toLowerCase())) return base;
+  const key = base.toLowerCase();
+  if (!taken.has(key)) {
+    taken.add(key);
+    return base;
+  }
 
   let suffix = 2;
   while (taken.has(`${base} ${suffix}`.toLowerCase())) suffix += 1;
-  return `${base} ${suffix}`;
+  const name = `${base} ${suffix}`;
+  taken.add(name.toLowerCase());
+  return name;
 }
 
 export function createNote(vault: Vault, name = '', body = ''): { vault: Vault; note: Note } {
@@ -84,6 +109,39 @@ export function createNote(vault: Vault, name = '', body = ''): { vault: Vault; 
     deletedAt: null,
   };
   return { vault: { ...vault, notes: [...vault.notes, note] }, note };
+}
+
+export interface NoteDraft {
+  name: string;
+  body: string;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+/**
+ * Creates many notes at once: one name index, one copy of the notes array,
+ * fresh ids. The result is the same as calling `createNote` once per draft.
+ */
+export function createNotes(
+  vault: Vault,
+  drafts: ReadonlyArray<NoteDraft>,
+): { vault: Vault; notes: Note[] } {
+  const taken = noteNameIndex(vault);
+  const now = Date.now();
+
+  const notes = drafts.map((draft): Note => {
+    const name = uniqueNoteNameIn(taken, draft.name);
+    return {
+      id: newId(),
+      name,
+      body: draft.body,
+      createdAt: draft.createdAt ?? now,
+      updatedAt: draft.updatedAt ?? now,
+      deletedAt: null,
+    };
+  });
+
+  return { vault: { ...vault, notes: [...vault.notes, ...notes] }, notes };
 }
 
 export function renameNote(

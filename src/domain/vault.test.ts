@@ -5,14 +5,17 @@ import {
   buildLocalGraph,
   createEmptyVault,
   createNote,
+  createNotes,
   deleteNote,
   normalizeNoteName,
+  noteNameIndex,
   renameNote,
   restoreNote,
   searchNotes,
+  uniqueNoteNameIn,
   updateNoteBody,
 } from './vault';
-import type { Vault } from './types';
+import type { Note, Vault } from './types';
 
 function vaultWith(...names: string[]): Vault {
   return names.reduce((vault, name) => createNote(vault, name).vault, createEmptyVault());
@@ -73,6 +76,124 @@ describe('createNote', () => {
     const vault = vaultWith('One', 'Two');
     const ids = vault.notes.map((note) => note.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('createNotes', () => {
+  /**
+   * The naming rule as it was before the batch path existed: the set of taken
+   * names is rebuilt from scratch for every single note.
+   */
+  function oldNoteName(notes: Note[], desired: string): string {
+    const base = desired.replace(/\s+/g, ' ').trim() || 'Untitled';
+    const taken = new Set(
+      notes.filter((entry) => entry.deletedAt === null).map((entry) => entry.name.toLowerCase()),
+    );
+    if (!taken.has(base.toLowerCase())) return base;
+    let suffix = 2;
+    while (taken.has(`${base} ${suffix}`.toLowerCase())) suffix += 1;
+    return `${base} ${suffix}`;
+  }
+
+  const base: Vault = {
+    notes: [
+      { id: 'id-alpha', name: 'Alpha', body: '', createdAt: 1, updatedAt: 1, deletedAt: null },
+      { id: 'id-keeper', name: 'Keeper', body: '', createdAt: 1, updatedAt: 1, deletedAt: null },
+      { id: 'id-trashed', name: 'Trashed', body: '', createdAt: 1, updatedAt: 1, deletedAt: 1 },
+    ],
+    activeNoteId: 'id-alpha',
+  };
+
+  const drafts = [
+    { name: 'alpha', body: 'a' },
+    { name: 'Alpha', body: 'b' },
+    { name: 'Alpha 2', body: 'c' },
+    { name: '   ', body: 'd' },
+    { name: 'Trashed', body: 'e' },
+    { name: 'Gamma', body: 'f' },
+    { name: 'Keeper', body: 'g' },
+  ];
+
+  it('names a batch exactly like the per note path did', () => {
+    const expected: string[] = [];
+    const grown = [...base.notes];
+    for (const draft of drafts) {
+      const name = oldNoteName(grown, draft.name);
+      expected.push(name);
+      grown.push({ id: `new-${expected.length}`, name, body: draft.body, createdAt: 1, updatedAt: 1, deletedAt: null });
+    }
+
+    const { notes } = createNotes(base, drafts);
+
+    expect(notes.map((note) => note.name)).toEqual(expected);
+    expect(notes.map((note) => note.name)).toEqual([
+      'alpha 2',
+      'Alpha 3',
+      'Alpha 2 2',
+      'Untitled',
+      'Trashed',
+      'Gamma',
+      'Keeper 2',
+    ]);
+  });
+
+  it('keeps the existing notes and adds the batch in one copy', () => {
+    const { vault, notes } = createNotes(base, drafts);
+
+    expect(vault.notes).toHaveLength(base.notes.length + drafts.length);
+    expect(vault.notes.slice(0, base.notes.length)).toEqual(base.notes);
+    expect(vault.notes.slice(base.notes.length)).toEqual(notes);
+  });
+
+  it('gives every note a fresh id and no delete stamp', () => {
+    const { notes } = createNotes(base, drafts);
+
+    const ids = notes.map((note) => note.id);
+    expect(new Set(ids).size).toBe(notes.length);
+    expect(ids).not.toContain('id-alpha');
+    expect(notes.every((note) => note.deletedAt === null)).toBe(true);
+    expect(notes.map((note) => note.body)).toEqual(drafts.map((draft) => draft.body));
+  });
+
+  it('keeps the given timestamps and falls back to now for the rest', () => {
+    const { notes } = createNotes(base, [
+      { name: 'Stamped', body: '', createdAt: 10, updatedAt: 20 },
+      { name: 'Unstamped', body: '' },
+    ]);
+
+    expect(notes[0]?.createdAt).toBe(10);
+    expect(notes[0]?.updatedAt).toBe(20);
+    expect(notes[1]?.createdAt).toBeGreaterThan(0);
+    expect(notes[1]?.updatedAt).toBe(notes[1]?.createdAt);
+  });
+});
+
+describe('noteNameIndex and uniqueNoteNameIn', () => {
+  it('collects the lowercased names of the active notes only', () => {
+    const vault = vaultWith('Alpha');
+    const deleted = deleteNote(vault, vault.notes[0]?.id ?? '');
+
+    expect([...noteNameIndex(deleted.vault)]).toEqual([]);
+    expect([...noteNameIndex(vault)]).toEqual(['alpha']);
+  });
+
+  it('leaves one note out when its id is excluded', () => {
+    const vault = vaultWith('Alpha', 'Beta');
+
+    expect([...noteNameIndex(vault, vault.notes[0]?.id)]).toEqual(['beta']);
+  });
+
+  it('adds the name it hands out to the taken set', () => {
+    const taken = new Set<string>();
+
+    expect(uniqueNoteNameIn(taken, 'Alpha')).toBe('Alpha');
+    expect(uniqueNoteNameIn(taken, 'Alpha')).toBe('Alpha 2');
+    expect(uniqueNoteNameIn(taken, 'alpha')).toBe('alpha 3');
+    expect([...taken]).toEqual(['alpha', 'alpha 2', 'alpha 3']);
+  });
+
+  it('falls back to the default name for a blank name', () => {
+    expect(uniqueNoteNameIn(new Set<string>(), '   ')).toBe('Untitled');
   });
 });
 

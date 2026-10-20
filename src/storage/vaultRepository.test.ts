@@ -184,11 +184,15 @@ describe('vault repository', () => {
   it('rejects when the write transaction is aborted', async () => {
     const restore = spyOnTransaction((transaction) => {
       if (transaction.mode !== 'readwrite') return;
+      const store = transaction.objectStore(STORE_NAME);
+      // No request is queued, so the abort is not shadowed by the error event
+      // of a request that is still pending.
+      store.put = (() => ({ onsuccess: null, onerror: null })) as unknown as IDBObjectStore['put'];
       queueMicrotask(() => transaction.abort());
     });
 
     try {
-      await expect(saveVault(createEmptyVault())).rejects.toThrow();
+      await expect(saveVault(createEmptyVault())).rejects.toThrow(/abort/i);
     } finally {
       restore();
     }
