@@ -20,7 +20,14 @@ export interface ExplorerProps {
   onRestore(id: string): void;
 }
 
-/** The note list with inline create, rename, delete, and restore actions. */
+/**
+ * The note list with the note title, a per-note disclosure with the rename
+ * and the delete, and the empty state.
+ *
+ * The title keeps the whole name, so the row never has to be cut short, and
+ * the actions live behind a native disclosure, so they are there for the
+ * keyboard and for a finger and not only for a hovering mouse.
+ */
 export default function Explorer({
   notes,
   trashed,
@@ -77,6 +84,12 @@ export default function Explorer({
   const commitRename = (id: string) => {
     onRename(id, draft);
     closeRename(id);
+  };
+
+  /** Closes the disclosure of the action that was taken. */
+  const closeActions = (element: Element) => {
+    const details = element.closest('details');
+    if (details instanceof HTMLDetailsElement) details.open = false;
   };
 
   return (
@@ -151,7 +164,6 @@ export default function Explorer({
                   <button
                     type="button"
                     className="explorer__note"
-                    title={note.name}
                     ref={(element) => {
                       if (element) noteButtons.current.set(note.id, element);
                       else noteButtons.current.delete(note.id);
@@ -161,22 +173,38 @@ export default function Explorer({
                   >
                     {note.name}
                   </button>
-                  <button
-                    type="button"
-                    className="explorer__action"
-                    aria-label={`Rename ${note.name}`}
-                    onClick={() => startRename(note)}
-                  >
-                    Rename
-                  </button>
-                  <button
-                    type="button"
-                    className="explorer__action explorer__action--danger"
-                    aria-label={`Delete ${note.name}`}
-                    onClick={() => onDelete(note.id)}
-                  >
-                    Delete
-                  </button>
+                  <details className="explorer__actions">
+                    <summary
+                      className="explorer__actions-summary"
+                      aria-label={`Actions for ${note.name}`}
+                    >
+                      Actions
+                    </summary>
+                    <div className="explorer__menu">
+                      <button
+                        type="button"
+                        className="explorer__action"
+                        aria-label={`Rename ${note.name}`}
+                        onClick={(event) => {
+                          closeActions(event.currentTarget);
+                          startRename(note);
+                        }}
+                      >
+                        Rename
+                      </button>
+                      <button
+                        type="button"
+                        className="explorer__action explorer__action--danger"
+                        aria-label={`Delete ${note.name}`}
+                        onClick={(event) => {
+                          closeActions(event.currentTarget);
+                          onDelete(note.id);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </details>
                 </>
               )}
             </li>

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import type { ChangeEvent, ReactNode, RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { ChangeEvent, RefObject } from 'react';
 
 import { activeNotes } from '../domain/vault';
 import type { LocalGraph } from '../domain/vault';
@@ -16,6 +16,25 @@ const NOTES_PANEL_ID = 'workspace-notes-panel';
 const CONTEXT_PANEL_ID = 'workspace-context-panel';
 const COMPACT_QUERY = '(max-width: 48rem)';
 
+/**
+ * True when the element is hidden, by itself or by one of its ancestors.
+ *
+ * The inactive view stays mounted, so only the hidden attribute says that it
+ * is not on the screen.
+ */
+export function isHidden(element: Element): boolean {
+  return element.closest('[hidden]') !== null;
+}
+
+/** The ways a note can be shown next to the explorer. */
+export type ViewMode = 'write' | 'split' | 'read';
+
+const VIEW_MODES: { value: ViewMode; label: string }[] = [
+  { value: 'write', label: 'Write' },
+  { value: 'split', label: 'Split' },
+  { value: 'read', label: 'Read' },
+];
+
 export interface WorkspaceProps {
   vault: Vault;
   status: string;
@@ -30,10 +49,14 @@ export interface WorkspaceProps {
   graphPending?: boolean;
   searchInputRef?: RefObject<HTMLInputElement | null>;
   editorRef?: RefObject<HTMLTextAreaElement | null>;
+  /** The visible preview, so the keyboard can go to the view that is shown. */
+  previewRef?: RefObject<HTMLElement | null>;
   fileInputRef?: RefObject<HTMLInputElement | null>;
   /** Counts the requests to focus the search field, which opens the notes. */
   searchRequest?: number;
-  paletteTrigger?: ReactNode;
+  /** Puts the keyboard on the content the reader can see. */
+  focusContent?: () => void;
+  onOpenPalette(): void;
   onRetry(): void;
   onDismissImport(): void;
   onSelect(id: string): void;
@@ -53,15 +76,15 @@ export interface WorkspaceProps {
 }
 
 /**
- * The three pane shell: activity rail, explorer, editor with preview, and the
- * context rail. It owns the single polite live region, the storage warning
- * and the import alert; the app owns the data.
+ * The workspace shell: a branded toolbar, the explorer, the note with its
+ * view modes, and the context rail. It owns the single polite live region,
+ * the storage warning and the import alert; the app owns the data.
  *
- * The document order is rail, explorer, editor, context, so the desktop
+ * The document order is toolbar, explorer, note, context, so the desktop
  * visual order and the document order agree and the keyboard reads the
  * screen from left to right. On a narrow screen the explorer and the context
- * rail become explicit panels that the rail toggles, and the editor is the
- * first content below the rail.
+ * rail become explicit panels that the toolbar toggles, and the note is the
+ * first content below the toolbar.
  */
 export default function Workspace(props: WorkspaceProps) {
   const notes = activeNotes(props.vault);
@@ -71,14 +94,23 @@ export default function Workspace(props: WorkspaceProps) {
   const [compact, setCompact] = useState(isCompact);
   const [notesOpen, setNotesOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
+  // The view follows the width of the screen until the user picks one, and
+  // an explicit choice stays for the rest of the session.
+  const [view, setView] = useState<ViewMode>(() => (isCompact() ? 'write' : 'split'));
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
   const notesToggleRef = useRef<HTMLButtonElement>(null);
   const contextToggleRef = useRef<HTMLButtonElement>(null);
   const importButtonRef = useRef<HTMLButtonElement>(null);
+  const filesRef = useRef<HTMLDetailsElement>(null);
+  const filesSummaryRef = useRef<HTMLElement>(null);
   const searchPending = useRef(false);
+  // The scroll offset of the two panes, so a change of the view does not
+  // lose the place of the writer. A ref and not a state, so the typing
+  // never re-renders the workspace.
+  const scrollRef = useRef({ editor: 0, preview: 0 });
 
   // The panels are always open on a wide screen and closed by default on a
-  // narrow one, where the editor is the primary content.
+  // narrow one, where the note is the primary content.
   const notesExpanded = !compact || notesOpen;
   const contextExpanded = !compact || contextOpen;
 
@@ -111,10 +143,22 @@ export default function Workspace(props: WorkspaceProps) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       const target = event.target;
-      if (isEditable(target)) return;
-      if (target instanceof Element && target.closest('dialog[open]')) return;
+      if (!(target instanceof Element)) return;
 
-      const panel = target instanceof Element ? target.closest('aside') : null;
+      // A native disclosure owns the keyboard while it is open. Escape
+      // closes it and gives the keyboard back to its summary.
+      const disclosure = target.closest('details[open]');
+      if (disclosure instanceof HTMLDetailsElement) {
+        event.preventDefault();
+        disclosure.open = false;
+        disclosure.querySelector('summary')?.focus();
+        return;
+      }
+
+      if (isEditable(target)) return;
+      if (target.closest('dialog[open]')) return;
+
+      const panel = target.closest('aside');
       if (panel?.id === CONTEXT_PANEL_ID && contextOpen) {
         setContextOpen(false);
         contextToggleRef.current?.focus();
@@ -135,13 +179,12 @@ export default function Workspace(props: WorkspaceProps) {
   }, [contextOpen, notesOpen]);
 
   // The explorer focuses the row in a child effect. If that did not place the
-  // keyboard, the editor takes it, so it never stays on the body.
+  // keyboard, the visible content takes it, so it never stays on the body.
   useEffect(() => {
     if (!props.focusNote) return;
     if (document.activeElement !== document.body) return;
-    const editor = props.editorRef?.current;
-    if (editor && !editor.disabled) editor.focus();
-  }, [props.focusNote, props.editorRef]);
+    props.focusContent?.();
+  }, [props.focusNote, props.focusContent]);
 
   // A request to focus the search field opens the notes panel first, because
   // a field inside a closed panel cannot take the focus.
@@ -158,59 +201,126 @@ export default function Workspace(props: WorkspaceProps) {
     props.searchInputRef?.current?.focus();
   }, [notesExpanded, props.searchRequest, props.searchInputRef]);
 
+  /** Closes the files disclosure and gives the keyboard back to its summary. */
+  const closeFiles = () => {
+    const details = filesRef.current;
+    if (!details) return;
+    details.open = false;
+    filesSummaryRef.current?.focus();
+  };
+
+  /**
+   * Remembers the scroll offset of the panes that are on the screen.
+   *
+   * A pane that is hidden loses its scrolling box, so the offset has to be
+   * put back when the pane comes back.
+   */
+  const captureScroll = () => {
+    const editor = props.editorRef?.current;
+    if (editor && !isHidden(editor)) scrollRef.current.editor = editor.scrollTop;
+    const preview = props.previewRef?.current;
+    if (preview && !isHidden(preview)) scrollRef.current.preview = preview.scrollTop;
+  };
+
+  /** Puts the scroll offset of the panes that are on the screen back. */
+  const restoreScroll = () => {
+    const editor = props.editorRef?.current;
+    if (editor && !isHidden(editor)) editor.scrollTop = scrollRef.current.editor;
+    const preview = props.previewRef?.current;
+    if (preview && !isHidden(preview)) preview.scrollTop = scrollRef.current.preview;
+  };
+
+  const changeView = (next: ViewMode) => {
+    captureScroll();
+    setView(next);
+  };
+
+  // The panes are on the screen again, so the offset of the writer goes back
+  // where it was.
+  useLayoutEffect(() => {
+    restoreScroll();
+  }, [view]);
+
   return (
     <div className="workspace">
-      <nav className="workspace__rail" aria-label="Workspace">
-        <h1 className="workspace__mark" aria-label="Lattice Notes">
-          LN
-        </h1>
-        <button
-          type="button"
-          className="workspace__rail-action"
-          aria-label="New note"
-          onClick={props.onCreate}
-        >
-          New
-        </button>
-        <button
-          type="button"
-          className="workspace__rail-action"
-          ref={importButtonRef}
-          aria-label="Import Markdown"
-          title="Import Markdown"
-          onClick={props.onImport}
-        >
-          Import
-        </button>
-        <button
-          type="button"
-          className="workspace__rail-action"
-          aria-label="Export vault"
-          title="Export vault"
-          onClick={props.onExport}
-        >
-          Export
-        </button>
-        <button
-          type="button"
-          className="workspace__rail-action workspace__panel-toggle"
-          ref={notesToggleRef}
-          aria-expanded={notesExpanded}
-          aria-controls={NOTES_PANEL_ID}
-          onClick={() => setNotesOpen((open) => !open)}
-        >
-          Notes
-        </button>
-        <button
-          type="button"
-          className="workspace__rail-action workspace__panel-toggle"
-          ref={contextToggleRef}
-          aria-expanded={contextExpanded}
-          aria-controls={CONTEXT_PANEL_ID}
-          onClick={() => setContextOpen((open) => !open)}
-        >
-          Context
-        </button>
+      <header className="workspace__toolbar">
+        <div className="workspace__toolbar-row">
+          <div className="workspace__brand">
+            <span className="workspace__mark" aria-hidden="true">
+              LN
+            </span>
+            <h1 className="workspace__name">Lattice Notes</h1>
+          </div>
+
+          <div className="workspace__actions">
+            <button type="button" className="workspace__new" onClick={props.onCreate}>
+              New note
+            </button>
+            <button
+              type="button"
+              className="workspace__command"
+              aria-haspopup="dialog"
+              aria-keyshortcuts="Control+K Meta+K"
+              onClick={props.onOpenPalette}
+            >
+              Commands
+            </button>
+            <details className="workspace__files" ref={filesRef}>
+              <summary className="workspace__files-summary" ref={filesSummaryRef}>
+                Files
+              </summary>
+              <div className="workspace__files-menu">
+                <button
+                  type="button"
+                  className="workspace__file-action"
+                  ref={importButtonRef}
+                  onClick={() => {
+                    // The keyboard is on the summary before the picker opens,
+                    // so it is still there when the picker closes.
+                    closeFiles();
+                    props.onImport();
+                  }}
+                >
+                  Import Markdown
+                </button>
+                <button
+                  type="button"
+                  className="workspace__file-action"
+                  onClick={() => {
+                    props.onExport();
+                    closeFiles();
+                  }}
+                >
+                  Export vault
+                </button>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <div className="workspace__panels">
+          <button
+            type="button"
+            className="workspace__panel-toggle"
+            ref={notesToggleRef}
+            aria-expanded={notesExpanded}
+            aria-controls={NOTES_PANEL_ID}
+            onClick={() => setNotesOpen((open) => !open)}
+          >
+            Notes
+          </button>
+          <button
+            type="button"
+            className="workspace__panel-toggle"
+            ref={contextToggleRef}
+            aria-expanded={contextExpanded}
+            aria-controls={CONTEXT_PANEL_ID}
+            onClick={() => setContextOpen((open) => !open)}
+          >
+            Context
+          </button>
+        </div>
+
         <input
           ref={props.fileInputRef}
           type="file"
@@ -221,7 +331,7 @@ export default function Workspace(props: WorkspaceProps) {
           aria-label="Markdown or vault export files"
           onChange={props.onImportFiles}
         />
-      </nav>
+      </header>
 
       <aside
         className="workspace__explorer"
@@ -245,13 +355,31 @@ export default function Workspace(props: WorkspaceProps) {
               onSelect={props.onSelect}
               onAnnounce={props.onAnnounce}
               inputRef={props.searchInputRef}
-              action={props.paletteTrigger}
             />
           }
         />
       </aside>
 
       <main className="workspace__main" aria-label="Note workspace">
+        <header className="workspace__doc-header">
+          <h2 className="workspace__doc-title">{active ? active.name : 'No note selected'}</h2>
+          <fieldset className="workspace__modes">
+            <legend className="workspace__modes-legend">View</legend>
+            {VIEW_MODES.map((mode) => (
+              <label className="workspace__mode" key={mode.value}>
+                <input
+                  type="radio"
+                  name="workspace-view"
+                  value={mode.value}
+                  checked={view === mode.value}
+                  onChange={() => changeView(mode.value)}
+                />
+                <span>{mode.label}</span>
+              </label>
+            ))}
+          </fieldset>
+        </header>
+
         <div className="workspace__statusbar">
           <p className="workspace__status" role="status">
             {props.status}
@@ -272,7 +400,9 @@ export default function Workspace(props: WorkspaceProps) {
               onClick={() => {
                 props.onDismissImport();
                 // The alert takes the focused button with it, so the keyboard
-                // goes to the import control that is always there.
+                // goes to the import control. Its disclosure opens first, or
+                // the button would not be on the screen.
+                if (filesRef.current) filesRef.current.open = true;
                 importButtonRef.current?.focus();
               }}
             >
@@ -288,10 +418,17 @@ export default function Workspace(props: WorkspaceProps) {
           </div>
         ) : null}
 
-        <div className="workspace__panes">
-          <Editor note={active} textareaRef={props.editorRef} onChange={props.onChange} />
+        <div className="workspace__panes" data-view={view}>
+          <Editor
+            note={active}
+            textareaRef={props.editorRef}
+            hidden={view === 'read'}
+            onChange={props.onChange}
+          />
           <Preview
             body={active?.body ?? ''}
+            contentRef={props.previewRef}
+            hidden={view === 'write'}
             onWikiLink={props.onWikiLink}
             existingNames={props.noteNames}
           />
@@ -309,7 +446,6 @@ export default function Workspace(props: WorkspaceProps) {
           graph={props.graph}
           noteNames={props.noteNames}
           graphPending={props.graphPending}
-          onSelect={props.onSelect}
           onNavigate={props.onNavigate}
           onWikiLink={props.onWikiLink}
         />

@@ -32,7 +32,7 @@ import type { ImportSkip, SkipReason } from './domain/transfer';
 import type { Vault } from './domain/types';
 import { createSeedVault, loadVault, saveVault } from './storage/vaultRepository';
 import CommandPalette from './components/CommandPalette';
-import Workspace from './components/Workspace';
+import Workspace, { isHidden } from './components/Workspace';
 import type { FocusTarget } from './components/Explorer';
 
 const SAVE_DEBOUNCE_MS = 200;
@@ -68,6 +68,7 @@ export default function App() {
   const loadFailures = useRef(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const previewRef = useRef<HTMLElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /** Applies the next vault to the state and to the ref the handlers read. */
@@ -156,15 +157,31 @@ export default function App() {
   }, [applyVault]);
 
   /**
+   * Puts the keyboard on the content the reader can see.
+   *
+   * The editor and the preview are both mounted in every view, and the
+   * inactive one is hidden, so the keyboard may never go to a hidden field.
+   */
+  const focusContent = useCallback(() => {
+    const editor = editorRef.current;
+    if (editor && !editor.disabled && !isHidden(editor)) {
+      editor.focus();
+      return;
+    }
+    const preview = previewRef.current;
+    if (preview && !isHidden(preview)) preview.focus();
+  }, []);
+
+  /**
    * Opens a note from a control that the navigation destroys, so the keyboard
    * has to be placed somewhere that survives.
    */
   const handleNavigate = useCallback(
     (id: string) => {
       handleSelect(id);
-      editorRef.current?.focus();
+      focusContent();
     },
-    [handleSelect],
+    [focusContent, handleSelect],
   );
 
   const handleChange = useCallback((body: string) => {
@@ -339,20 +356,24 @@ export default function App() {
       if (match) {
         handleSelect(match.id);
         // The preview link is replaced by the note it opens.
-        editorRef.current?.focus();
+        focusContent();
         return;
       }
       // A missing target becomes the note it names, once.
       const { vault: next, note } = createNote(vaultRef.current, wanted);
       applyVault({ ...next, activeNoteId: note.id });
       setStatus(`Created ${note.name}`);
-      editorRef.current?.focus();
+      focusContent();
     },
-    [applyVault, handleSelect],
+    [applyVault, focusContent, handleSelect],
   );
 
   const announce = useCallback((message: string) => {
     setStatus(message);
+  }, []);
+
+  const openPalette = useCallback(() => {
+    setPaletteOpen(true);
   }, []);
 
   /**
@@ -506,18 +527,10 @@ export default function App() {
         graphPending={graphPending}
         searchInputRef={searchInputRef}
         editorRef={editorRef}
+        previewRef={previewRef}
         searchRequest={searchRequest}
-        paletteTrigger={
-          <button
-            type="button"
-            className="search__action"
-            aria-haspopup="dialog"
-            aria-keyshortcuts="Control+K Meta+K"
-            onClick={() => setPaletteOpen(true)}
-          >
-            Commands
-          </button>
-        }
+        focusContent={focusContent}
+        onOpenPalette={openPalette}
         onRetry={() => {
           void handleRetry();
         }}

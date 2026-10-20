@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, type ReactNode, type RefObject } from 'react';
 
 import { parseNote } from '../domain/markdown';
 import type { BlockNode, InlineNode } from '../domain/markdown';
@@ -6,6 +6,10 @@ import { normalizeNoteName } from '../domain/vault';
 
 export interface PreviewProps {
   body: string;
+  /** The element that takes the keyboard when the preview is the only view. */
+  contentRef?: RefObject<HTMLElement | null>;
+  /** True while another view shows the note, so the preview is not on screen. */
+  hidden?: boolean;
   onWikiLink(target: string): void;
   /** Lower cased names of the active notes, so a missing target can say so. */
   existingNames?: ReadonlySet<string>;
@@ -24,12 +28,24 @@ interface RenderContext {
  * become buttons that ask the app to select a note. A wiki link without a
  * target names the note it would create, so the outcome is never a surprise.
  */
-export default function Preview({ body, onWikiLink, existingNames }: PreviewProps) {
+export default function Preview({
+  body,
+  contentRef,
+  hidden,
+  onWikiLink,
+  existingNames,
+}: PreviewProps) {
   const parsed = parseNote(body);
   const context: RenderContext = { onWikiLink, existingNames };
 
   return (
-    <section className="preview" aria-labelledby="preview-title">
+    <section
+      className="preview"
+      aria-labelledby="preview-title"
+      ref={contentRef}
+      tabIndex={-1}
+      hidden={hidden}
+    >
       <h2 className="preview__title" id="preview-title">
         Preview
       </h2>

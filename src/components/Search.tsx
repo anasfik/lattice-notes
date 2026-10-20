@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 
 import { searchNotes } from '../domain/vault';
 import type { Vault } from '../domain/types';
@@ -9,8 +9,6 @@ export interface SearchProps {
   onAnnounce(message: string): void;
   /** Lets the app focus the field for the Ctrl/Cmd+P shortcut. */
   inputRef?: React.RefObject<HTMLInputElement | null>;
-  /** A control that belongs beside the field, such as the palette trigger. */
-  action?: ReactNode;
 }
 
 /**
@@ -20,7 +18,7 @@ export interface SearchProps {
  * never disagree about what a query means. The query lives here; the app only
  * hears about the notes the user opens.
  */
-export default function Search({ vault, onSelect, onAnnounce, inputRef, action }: SearchProps) {
+export default function Search({ vault, onSelect, onAnnounce, inputRef }: SearchProps) {
   const [query, setQuery] = useState('');
   const fieldId = useId();
   const localInput = useRef<HTMLInputElement>(null);
@@ -79,7 +77,6 @@ export default function Search({ vault, onSelect, onAnnounce, inputRef, action }
             resultButtons.current.get(first.noteId)?.focus();
           }}
         />
-        {action}
       </div>
 
       {trimmed && results.length === 0 ? (

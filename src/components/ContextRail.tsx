@@ -16,19 +16,24 @@ export interface ContextRailProps {
   noteNames: ReadonlySet<string>;
   /** True while the graph still trails the vault. */
   graphPending?: boolean;
-  onSelect(id: string): void;
-  /** Opens a note from a backlink, whose button the navigation replaces. */
+  /**
+   * Opens a note without moving the keyboard.
+   *
+   * The rail opens every note through {@link onNavigate} now, so the
+   * keyboard always lands on the content that is on the screen. The prop
+   * stays for the callers that still pass it.
+   */
+  onSelect?(id: string): void;
+  /** Opens a note and hands the keyboard to the content on the screen. */
   onNavigate(id: string): void;
   onWikiLink(target: string): void;
 }
-
 /** The active note with its backlinks, its outgoing links, and the local graph. */
 export default function ContextRail({
   note,
   graph,
   noteNames,
   graphPending = false,
-  onSelect,
   onNavigate,
   onWikiLink,
 }: ContextRailProps) {
@@ -45,17 +50,6 @@ export default function ContextRail({
       <h2 className="context__title">Context</h2>
       {note ? (
         <>
-          <dl className="context__meta">
-            <dt>Name</dt>
-            <dd>{note.name}</dd>
-            <dt>Words</dt>
-            <dd>{wordCount(note.body)}</dd>
-            <dt>Created</dt>
-            <dd>{formatTimestamp(note.createdAt)}</dd>
-            <dt>Updated</dt>
-            <dd>{formatTimestamp(note.updatedAt)}</dd>
-          </dl>
-
           <nav className="context__section" aria-label="Backlinks" aria-busy={graphPending}>
             <h3 className="context__heading">
               {graphPending ? 'Backlinks' : `Backlinks (${backlinks.length})`}
@@ -113,9 +107,28 @@ export default function ContextRail({
             </h3>
             <Graph
               graph={graph ?? { activeId: '', nodes: [], edges: [], backlinks: [] }}
-              onSelect={onSelect}
+              // The picture opens a note like the list does, so the keyboard
+              // always lands on the content that is on the screen.
+              onSelect={onNavigate}
               onNavigate={onNavigate}
             />
+          </section>
+
+          {/* The metadata of the note is a footnote, not the subject. */}
+          <section className="context__section context__details" aria-labelledby="context-details">
+            <h3 className="context__heading" id="context-details">
+              Details
+            </h3>
+            <dl className="context__meta">
+              <dt>Name</dt>
+              <dd>{note.name}</dd>
+              <dt>Words</dt>
+              <dd>{wordCount(note.body)}</dd>
+              <dt>Created</dt>
+              <dd>{formatTimestamp(note.createdAt)}</dd>
+              <dt>Updated</dt>
+              <dd>{formatTimestamp(note.updatedAt)}</dd>
+            </dl>
           </section>
         </>
       ) : (

@@ -153,8 +153,8 @@ function alertText(): string {
   return container.querySelector('[role="alert"]')?.textContent?.trim() ?? '';
 }
 
-function editorTitle(): string {
-  return container.querySelector('.editor__title')?.textContent?.trim() ?? '';
+function noteTitle(): string {
+  return container.querySelector('.workspace__doc-title')?.textContent?.trim() ?? '';
 }
 
 function editorTextarea(): HTMLTextAreaElement {
@@ -314,7 +314,7 @@ describe('workspace shell', () => {
 
     expect(noteNames().length).toBeGreaterThan(1);
     expect(noteNames()).toContain('Welcome to Lattice Notes');
-    expect(editorTitle()).toBe('Welcome to Lattice Notes');
+    expect(noteTitle()).toBe('Welcome to Lattice Notes');
   });
 
   it('keeps a deliberately emptied vault empty and offers recovery', async () => {
@@ -355,7 +355,7 @@ describe('workspace shell', () => {
 
     expect(noteNames()).toHaveLength(before + 1);
     expect(statusText()).toContain('Created');
-    expect(editorTitle()).toBe('Untitled');
+    expect(noteTitle()).toBe('Untitled');
     expect(editorTextarea().disabled).toBe(false);
   });
 
@@ -427,7 +427,7 @@ describe('workspace shell', () => {
 
     await click(link as Element);
 
-    expect(editorTitle()).toBe('Beta');
+    expect(noteTitle()).toBe('Beta');
   });
 
   it('renders hostile markdown as inert text', async () => {
@@ -542,7 +542,7 @@ describe('workspace shell', () => {
     );
 
     expect(order).toEqual([
-      'workspace__rail',
+      'workspace__toolbar',
       'workspace__explorer',
       'workspace__main',
       'workspace__context',
@@ -562,7 +562,7 @@ describe('workspace shell', () => {
 
     await remountApp();
 
-    expect(editorTitle()).toBe('Getting started');
+    expect(noteTitle()).toBe('Getting started');
   });
 
   it('replaces the undo slot with the note of the second delete', async () => {
@@ -726,7 +726,17 @@ describe('import and export', () => {
     await renderApp();
 
     expect(alertText()).toContain('Local storage');
-    expect(buttonByName('Export vault')).not.toBeNull();
+
+    // The export control lives in the files disclosure, so the disclosure
+    // has to be open before the control is on the screen.
+    const files = container.querySelector<HTMLDetailsElement>('details.workspace__files');
+    if (!files) throw new Error('no files disclosure');
+    await click(files.querySelector('summary') as Element);
+    expect(files.open).toBe(true);
+
+    const exportButton = buttonByName('Export vault');
+    expect(exportButton).not.toBeNull();
+    expect(files.contains(exportButton)).toBe(true);
   });
 
   it('clears the import alert when a later import succeeds', async () => {
@@ -1247,7 +1257,7 @@ describe('search', () => {
 
     await click(result as Element);
 
-    expect(editorTitle()).toBe('Roadmap');
+    expect(noteTitle()).toBe('Roadmap');
   });
 
   it('shows the snippet of a note found by its body', async () => {
@@ -1335,7 +1345,7 @@ describe('command palette', () => {
     await click(option as Element);
 
     expect(noteNames()).toHaveLength(before + 1);
-    expect(editorTitle()).toBe('Untitled');
+    expect(noteTitle()).toBe('Untitled');
     expect(statusText()).toContain('Created');
     expect(paletteDialog().hasAttribute('open')).toBe(false);
   });
@@ -1355,7 +1365,7 @@ describe('command palette', () => {
 
     await pressKey(paletteInput(), 'Enter');
 
-    expect(editorTitle()).toBe('Beta');
+    expect(noteTitle()).toBe('Beta');
     expect(paletteDialog().hasAttribute('open')).toBe(false);
   });
 
@@ -1441,14 +1451,14 @@ describe('linked notes', () => {
     await click(container.querySelector('.preview__wikilink') as Element);
 
     expect(noteNames()).toEqual(['Alpha', 'Ghost']);
-    expect(editorTitle()).toBe('Ghost');
+    expect(noteTitle()).toBe('Ghost');
     expect(statusText()).toContain('Created Ghost');
 
     await click(buttonByName('Alpha'));
     await click(container.querySelector('.preview__wikilink') as Element);
 
     expect(noteNames()).toEqual(['Alpha', 'Ghost']);
-    expect(editorTitle()).toBe('Ghost');
+    expect(noteTitle()).toBe('Ghost');
   });
 
   it('keeps the keyboard in the note it opened', async () => {
@@ -1480,7 +1490,7 @@ describe('linked notes', () => {
 
     await click(nav?.querySelector('button') as Element);
 
-    expect(editorTitle()).toBe('Alpha');
+    expect(noteTitle()).toBe('Alpha');
     expect(document.activeElement).toBe(editorTextarea());
   });
 
@@ -1545,7 +1555,7 @@ describe('linked notes', () => {
     await click(create as Element);
 
     expect(noteNames()).toEqual(['Alpha', 'Beta', 'Ghost']);
-    expect(editorTitle()).toBe('Ghost');
+    expect(noteTitle()).toBe('Ghost');
   });
 
   it('draws the local graph and opens a node', async () => {
@@ -1562,7 +1572,7 @@ describe('linked notes', () => {
 
     await click(container.querySelector('.graph__list button') as Element);
 
-    expect(editorTitle()).toBe('Beta');
+    expect(noteTitle()).toBe('Beta');
   });
 
   it('keeps the keyboard in the note a graph neighbour opens', async () => {
@@ -1578,8 +1588,285 @@ describe('linked notes', () => {
 
     await click(button);
 
-    expect(editorTitle()).toBe('Beta');
+    expect(noteTitle()).toBe('Beta');
     expect(document.activeElement).toBe(editorTextarea());
     expect(document.activeElement).not.toBe(document.body);
+  });
+});
+
+describe('toolbar and views', () => {
+  function filesDisclosure(): HTMLDetailsElement {
+    const found = container.querySelector<HTMLDetailsElement>('details.workspace__files');
+    if (!found) throw new Error('no files disclosure');
+    return found;
+  }
+
+  function noteDisclosure(index = 0): HTMLDetailsElement {
+    const found = container.querySelectorAll<HTMLDetailsElement>('details.explorer__actions')[index];
+    if (!found) throw new Error('no note disclosure');
+    return found;
+  }
+
+  function viewRadio(value: string): HTMLInputElement {
+    const found = container.querySelector<HTMLInputElement>(
+      `input[name="workspace-view"][value="${value}"]`,
+    );
+    if (!found) throw new Error(`no ${value} radio`);
+    return found;
+  }
+
+  it('shows the product name and the primary actions in the toolbar', async () => {
+    await renderApp();
+
+    const toolbar = container.querySelector('.workspace__toolbar');
+    expect(toolbar).not.toBeNull();
+    expect(toolbar?.querySelector('h1')?.textContent).toBe('Lattice Notes');
+    expect(buttonByName('New note')).not.toBeNull();
+    expect(buttonByName('Commands')).not.toBeNull();
+    expect(filesDisclosure().querySelector('summary')?.textContent).toBe('Files');
+    expect(buttonByName('Import Markdown')).not.toBeNull();
+    expect(buttonByName('Export vault')).not.toBeNull();
+  });
+
+  it('opens the files disclosure and closes it with Escape', async () => {
+    await renderApp();
+    const files = filesDisclosure();
+    const summary = files.querySelector('summary') as HTMLElement;
+
+    summary.focus();
+    await click(summary);
+    expect(files.open).toBe(true);
+
+    await pressKey(summary, 'Escape');
+
+    expect(files.open).toBe(false);
+    expect(document.activeElement).toBe(summary);
+  });
+
+  it('closes the files disclosure after an action and gives the keyboard back to the summary', async () => {
+    await renderApp();
+    const files = filesDisclosure();
+    const summary = files.querySelector('summary') as HTMLElement;
+    await click(summary);
+    expect(files.open).toBe(true);
+
+    await click(buttonByName('Import Markdown'));
+
+    expect(files.open).toBe(false);
+    expect(document.activeElement).toBe(summary);
+  });
+
+  it('puts the rename and delete actions behind a per-note disclosure', async () => {
+    await renderApp();
+
+    const disclosure = noteDisclosure();
+    expect(disclosure.querySelector('summary')?.textContent).toBe('Actions');
+    expect(disclosure.querySelector('summary')?.getAttribute('aria-label')).toBe(
+      'Actions for Welcome to Lattice Notes',
+    );
+    expect(disclosure.querySelector('button')?.textContent).toBe('Rename');
+    // The whole title stays in the row, so it never has to be cut short.
+    expect(container.querySelector('.explorer__note')?.textContent).toBe('Welcome to Lattice Notes');
+  });
+
+  it('renames a note through the per-note disclosure', async () => {
+    await renderApp();
+    const disclosure = noteDisclosure();
+    await click(disclosure.querySelector('summary') as Element);
+    expect(disclosure.open).toBe(true);
+
+    await click(buttonByName('Rename Welcome to Lattice Notes'));
+
+    // The disclosure closes on the action, so the menu is not left open
+    // over the note list.
+    expect(disclosure.open).toBe(false);
+
+    const input = container.querySelector<HTMLInputElement>('.explorer__rename-input');
+    if (!input) throw new Error('no rename input');
+    await fill(input, 'Renamed');
+    await pressKey(input, 'Enter');
+
+    expect(noteNames()).toContain('Renamed');
+    expect(statusText()).toContain('Renamed');
+  });
+
+  it('closes the per-note disclosure when a note is deleted', async () => {
+    await renderApp();
+    const disclosure = noteDisclosure();
+    await click(disclosure.querySelector('summary') as Element);
+    expect(disclosure.open).toBe(true);
+
+    await click(buttonByName('Delete Welcome to Lattice Notes'));
+
+    expect(disclosure.open).toBe(false);
+    expect(noteNames()).not.toContain('Welcome to Lattice Notes');
+  });
+
+  it('closes the per-note disclosure with Escape and gives the keyboard back to the summary', async () => {
+    await renderApp();
+    const disclosure = noteDisclosure();
+    const summary = disclosure.querySelector('summary') as HTMLElement;
+    await click(summary);
+    expect(disclosure.open).toBe(true);
+
+    await pressKey(summary, 'Escape');
+
+    expect(disclosure.open).toBe(false);
+    expect(document.activeElement).toBe(summary);
+  });
+
+  it('shows the active note title and the view modes in the header', async () => {
+    await renderApp();
+
+    expect(container.querySelector('.workspace__doc-title')?.textContent).toBe(
+      'Welcome to Lattice Notes',
+    );
+    const radios = queryAll<HTMLInputElement>('input[name="workspace-view"]');
+    expect(radios.map((radio) => radio.value)).toEqual(['write', 'split', 'read']);
+  });
+
+  it('defaults to split on a wide screen and to write on a narrow one', async () => {
+    await renderApp();
+    expect(viewRadio('split').checked).toBe(true);
+
+    window.innerWidth = 390;
+    await remountApp();
+    expect(viewRadio('write').checked).toBe(true);
+  });
+
+  it('keeps the note text when the view changes', async () => {
+    await renderApp();
+    await fill(editorTextarea(), 'kept body');
+
+    // The writer's place in the text is a part of the draft.
+    const textarea = editorTextarea();
+    textarea.setSelectionRange(4, 8);
+    const field = textarea;
+
+    await click(viewRadio('read'));
+
+    expect(container.querySelector('.editor')?.hasAttribute('hidden')).toBe(true);
+    expect(container.querySelector('.preview')?.hasAttribute('hidden')).toBe(false);
+    expect(editorTextarea().value).toBe('kept body');
+
+    await click(viewRadio('write'));
+
+    expect(container.querySelector('.preview')?.hasAttribute('hidden')).toBe(true);
+    expect(editorTextarea().value).toBe('kept body');
+    // The same field, with the same selection, so the caret is not reset.
+    expect(editorTextarea()).toBe(field);
+    expect(editorTextarea().selectionStart).toBe(4);
+    expect(editorTextarea().selectionEnd).toBe(8);
+  });
+
+  it('puts the keyboard on the visible content when the graph picture opens a note in read mode', async () => {
+    const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]].');
+    const second = createNote(first.vault, 'Beta', 'See [[Alpha]].');
+    await saveVault({ ...second.vault, activeNoteId: first.note.id });
+    await renderApp();
+    await waitFor(() => container.querySelector('.graph__node') !== null);
+
+    await click(viewRadio('read'));
+    const node = container.querySelectorAll('.graph__node')[1];
+    if (!node) throw new Error('no graph node');
+
+    await click(node);
+
+    expect(noteTitle()).toBe('Beta');
+    // The picture opens the note like the list does, so the keyboard lands on
+    // the content that is on the screen and not on a hidden field.
+    expect(document.activeElement).toBe(container.querySelector('.preview'));
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it('keeps the scroll offset of the editor and the preview across a view change', async () => {
+    await renderApp();
+    const textarea = editorTextarea();
+
+    textarea.scrollTop = 250;
+    await click(viewRadio('read'));
+    // A browser drops the offset of a box it takes off the screen, so the
+    // app has to put it back when the box returns.
+    textarea.scrollTop = 0;
+    await click(viewRadio('write'));
+
+    expect(textarea.scrollTop).toBe(250);
+  });
+
+  it('keeps the scroll offset of the preview across a view change', async () => {
+    await renderApp();
+    const preview = container.querySelector('.preview') as HTMLElement;
+    if (!preview) throw new Error('no preview');
+
+    preview.scrollTop = 120;
+    await click(viewRadio('write'));
+    preview.scrollTop = 0;
+    await click(viewRadio('split'));
+
+    expect(preview.scrollTop).toBe(120);
+  });
+
+  it('follows a wiki link in read mode and puts the keyboard on the visible content', async () => {
+    const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]] now.');
+    const second = createNote(first.vault, 'Beta', 'Beta body.');
+    await saveVault({ ...second.vault, activeNoteId: first.note.id });
+    await renderApp();
+
+    await click(viewRadio('read'));
+    await click(container.querySelector('.preview__wikilink') as Element);
+
+    expect(noteTitle()).toBe('Beta');
+    expect(document.activeElement).toBe(container.querySelector('.preview'));
+    expect(document.activeElement).not.toBe(editorTextarea());
+  });
+
+  it('creates a missing wiki target in read mode and keeps the keyboard on the visible content', async () => {
+    const created = createNote(createEmptyVault(), 'Alpha', 'See [[Ghost]] now.');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+    await renderApp();
+
+    await click(viewRadio('read'));
+    await click(container.querySelector('.preview__wikilink') as Element);
+
+    expect(noteTitle()).toBe('Ghost');
+    expect(document.activeElement).toBe(container.querySelector('.preview'));
+  });
+
+  it('puts the keyboard on the visible content when a backlink opens a note in read mode', async () => {
+    const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]] now.');
+    const second = createNote(first.vault, 'Beta', 'Beta body.');
+    await saveVault({ ...second.vault, activeNoteId: second.note.id });
+    await renderApp();
+    await waitFor(() => container.querySelector('nav[aria-label="Backlinks"] button') !== null);
+
+    await click(viewRadio('read'));
+    await click(container.querySelector('nav[aria-label="Backlinks"] button') as Element);
+
+    expect(noteTitle()).toBe('Alpha');
+    expect(document.activeElement).toBe(container.querySelector('.preview'));
+  });
+
+  it('puts the keyboard on the visible content when the graph opens a note in read mode', async () => {
+    const first = createNote(createEmptyVault(), 'Alpha', 'See [[Beta]].');
+    const second = createNote(first.vault, 'Beta', 'See [[Alpha]].');
+    await saveVault({ ...second.vault, activeNoteId: first.note.id });
+    await renderApp();
+    await waitFor(() => container.querySelector('.graph__list button') !== null);
+
+    await click(viewRadio('read'));
+    await click(container.querySelector('.graph__list button') as Element);
+
+    expect(noteTitle()).toBe('Beta');
+    expect(document.activeElement).toBe(container.querySelector('.preview'));
+  });
+
+  it('opens the command palette on a narrow screen while the notes panel is closed', async () => {
+    window.innerWidth = 390;
+    await renderApp();
+    expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(true);
+
+    await click(buttonByName('Commands'));
+
+    expect(paletteDialog().hasAttribute('open')).toBe(true);
   });
 });
