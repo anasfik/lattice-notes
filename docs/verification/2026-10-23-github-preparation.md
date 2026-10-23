@@ -45,7 +45,7 @@ No deployment, release, public-visibility change, branch protection, or account/
 - Workspace commit `cad557631ab6f705e3ba6a075c5726ebb32ed09c` pushed to `main`; remote branch SHA matches. Local feature branch and worktree retained, with `origin/main` upstream.
 - README is readable through the GitHub API. Repository is private, issues enabled, wiki/projects disabled, merged-branch cleanup enabled, and Markdown/local-first/offline-first/React/TypeScript topics configured.
 - **GitHub CI blocked:** the [push run](https://github.com/anasfik/lattice-notes/actions/runs/39878234851) and a separate [manual diagnostic run](https://github.com/anasfik/lattice-notes/actions/runs/39878434787) both returned `startup_failure`, with zero jobs/check runs and no downloadable logs. Dependabot-generated runs also failed at startup. Actions is enabled and local `actionlint` passes; the API evidence does not establish the underlying cause. No speculative workflow changes, billing changes or repeated reruns were made.
-- Follow-up: inspect the run's GitHub UI for any account/repository restriction, resolve it, then run **CI → Run workflow**. A successful hosted test/build is still required; local checks are not a substitute.
+- Root cause (established later, run [39882463447](https://github.com/anasfik/lattice-notes/actions/runs/39882463447)): **"The job was not started because your account is locked due to a billing issue"** — a GitHub account-level lock, not a workflow-file or repository-configuration defect. Local checks remain valid; resolution requires the repository owner to clear the billing status (GitHub → Settings → Billing; no automated agent action).
 
 ## Visibility
 
