@@ -136,7 +136,9 @@ in one vault and is never mixed with the history of another note.
 Snapshots respect the configured interval: edits within that interval do not
 each produce a new recovery point. History is capped at 8 MiB of UTF-8 body
 text per vault, with oldest snapshots removed first; storage pressure may
-reclaim more history so saving the current note takes priority. Snapshots
+reclaim more history so saving the current note takes priority. Bodies past
+the configured retention window are swept out of the storage: opening the
+history of a note removes them, even while capture is off. Snapshots
 are not an independent backup.
 
 **Delete note permanently** (Ctrl/Cmd+K → the command palette) is the only
@@ -304,11 +306,15 @@ complete accessibility certification or full application parity.
 
 ## Reference material
 
-The workspace layout and the local-first approach were informed by a bounded,
-read-only static analysis of an Obsidian Desktop bootstrap archive, kept
-outside this repository. That
-analysis read archive headers and hashes only: no proprietary code was
-executed and nothing was copied into this project.
+The workspace layout and the local-first approach were informed by public
+Obsidian documentation research ([feature gap
+research](docs/superpowers/specs/2026-10-21-feature-gap-research.md), each
+claim cited with a retrieval date) and by a bounded, read-only artifact
+inspection ([reference artifact
+evidence](docs/superpowers/specs/2026-10-21-obsidian-artifact-evidence.md)):
+an Obsidian Desktop package archive and an AppImage launcher were identified
+by header and hash only. No proprietary code was executed and nothing was
+copied into this project.
 
 Lattice Notes is an independent implementation. It does not claim runtime
 parity with Obsidian, and it does not implement the Obsidian file format or
