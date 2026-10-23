@@ -46,3 +46,7 @@ No deployment, release, public-visibility change, branch protection, or account/
 - README is readable through the GitHub API. Repository is private, issues enabled, wiki/projects disabled, merged-branch cleanup enabled, and Markdown/local-first/offline-first/React/TypeScript topics configured.
 - **GitHub CI blocked:** the [push run](https://github.com/anasfik/lattice-notes/actions/runs/39878234851) and a separate [manual diagnostic run](https://github.com/anasfik/lattice-notes/actions/runs/39878434787) both returned `startup_failure`, with zero jobs/check runs and no downloadable logs. Dependabot-generated runs also failed at startup. Actions is enabled and local `actionlint` passes; the API evidence does not establish the underlying cause. No speculative workflow changes, billing changes or repeated reruns were made.
 - Follow-up: inspect the run's GitHub UI for any account/repository restriction, resolve it, then run **CI → Run workflow**. A successful hosted test/build is still required; local checks are not a substitute.
+
+## Visibility
+
+On explicit owner request (2026-10-23), the repository was changed from private to **public** via `gh repo edit --visibility public`. Verified after the change: `isPrivate: false`, `visibility: "public"` from the API. Before the change, the working tree and all reachable history blobs had already passed the bounded common-credential scan (114 working files, 183 history blobs, no matches). The private history was never exposed to third parties before this point; no history rewrite was needed.
