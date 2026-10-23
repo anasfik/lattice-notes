@@ -4,12 +4,15 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { formatLocalDate, monthDays, parseCivilDate } from '../domain/dailyNotes';
 import { normalizeNoteName } from '../domain/vault';
 import type { Note } from '../domain/types';
+import Icon from './Icon';
 
 export interface CalendarProps {
   /** True when the calendar is on the screen. */
   open: boolean;
   /** The active notes of the open vault, to mark the days that have one. */
   notes: Note[];
+  /** True when the screen of the reader is narrow. */
+  compact?: boolean;
   /** Closes the calendar. */
   onClose(): void;
   /** Opens the note of a day. */
@@ -64,6 +67,7 @@ const WEEKDAYS = [
 export default function Calendar({
   open,
   notes,
+  compact = false,
   onClose,
   onOpenDate,
   onFocusContent,
@@ -186,7 +190,7 @@ export default function Calendar({
   return (
     <dialog
       ref={dialogRef}
-      className="calendar"
+      className={compact ? 'calendar calendar--compact' : 'calendar'}
       aria-labelledby={titleId}
       // A platform-initiated cancel (the browser closes the dialog itself)
       // must still tell the app, or the toolbar button keeps a stale open
@@ -210,7 +214,7 @@ export default function Calendar({
             aria-label="Previous month"
             onClick={() => move(addMonths(cursor, -1))}
           >
-            <span aria-hidden="true">‹</span>
+            <Icon name="previous" />
           </button>
           <h2 className="calendar__month" id={titleId}>
             {MONTHS[cursor.month - 1]} {cursor.year}
@@ -221,7 +225,7 @@ export default function Calendar({
             aria-label="Next month"
             onClick={() => move(addMonths(cursor, 1))}
           >
-            <span aria-hidden="true">›</span>
+            <Icon name="next" />
           </button>
         </div>
 
@@ -306,6 +310,7 @@ export default function Calendar({
             className="calendar__today"
             onClick={() => move(civilOf(new Date()))}
           >
+            <Icon name="today" size={14} />
             Today
           </button>
         </div>

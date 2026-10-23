@@ -193,6 +193,25 @@ export function deleteNote(vault: Vault, id: string): { vault: Vault; note: Note
   return { vault: { ...vault, notes, activeNoteId }, note: next };
 }
 
+/**
+ * Removes a note from the vault for good.
+ *
+ * There is no undo for this one: the note is gone from the vault, not hidden
+ * in the trash. The caller has to confirm it with the reader first.
+ */
+export function purgeNote(vault: Vault, id: string): { vault: Vault; note: Note | null } {
+  const existing = vault.notes.find((note) => note.id === id);
+  if (!existing) return { vault, note: null };
+
+  const notes = vault.notes.filter((note) => note.id !== id);
+  const activeNoteId =
+    vault.activeNoteId === id
+      ? (notes.find((note) => note.deletedAt === null)?.id ?? null)
+      : vault.activeNoteId;
+
+  return { vault: { ...vault, notes, activeNoteId }, note: existing };
+}
+
 export function restoreNote(vault: Vault, id: string): { vault: Vault; note: Note | null } {
   const existing = vault.notes.find((note) => note.id === id);
   if (!existing || existing.deletedAt === null) return { vault, note: null };

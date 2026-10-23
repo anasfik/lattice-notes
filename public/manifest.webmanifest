@@ -1,17 +1,23 @@
 {
   "name": "Lattice Notes",
   "short_name": "Lattice",
-  "description": "A local-first Markdown knowledge workspace with linked notes, search, backlinks, and a local link graph.",
+  "description": "A local-first Markdown writing desk with linked notes, search, backlinks, and a local link graph. Your notes stay in your browser.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#0f1115",
-  "theme_color": "#0f1115",
+  "background_color": "#f6f3ec",
+  "theme_color": "#202923",
   "icons": [
     {
       "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any"
     }
   ]

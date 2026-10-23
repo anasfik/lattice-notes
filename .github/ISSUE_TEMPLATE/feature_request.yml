@@ -1,0 +1,14 @@
+name: Feature request
+description: Describe the problem before proposing a feature.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution and alternatives
+      description: Consider offline use, privacy, accessibility and data portability.

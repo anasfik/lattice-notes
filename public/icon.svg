@@ -1,18 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Lattice Notes">
   <title>Lattice Notes</title>
-  <rect width="512" height="512" rx="112" fill="#101215" />
-  <g stroke="#6a7382" stroke-width="12" stroke-linecap="round" opacity="0.85" fill="none">
-    <path d="M128 128H384M128 256H384M128 384H384M128 128V384M256 128V384M384 128V384" />
+  <defs>
+    <mask id="ln-vertical">
+      <rect width="512" height="512" fill="#fff" />
+      <rect x="241" y="113" width="30" height="30" fill="#000" />
+      <rect x="113" y="241" width="30" height="30" fill="#000" />
+      <rect x="369" y="241" width="30" height="30" fill="#000" />
+      <rect x="241" y="369" width="30" height="30" fill="#000" />
+    </mask>
+    <mask id="ln-horizontal">
+      <rect width="512" height="512" fill="#fff" />
+      <rect x="113" y="113" width="30" height="30" fill="#000" />
+      <rect x="369" y="113" width="30" height="30" fill="#000" />
+      <rect x="241" y="241" width="30" height="30" fill="#000" />
+      <rect x="113" y="369" width="30" height="30" fill="#000" />
+      <rect x="369" y="369" width="30" height="30" fill="#000" />
+    </mask>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="#202923" />
+  <g stroke="#d18a5e" stroke-width="24" stroke-linecap="round" fill="none" mask="url(#ln-vertical)">
+    <line x1="128" y1="64" x2="128" y2="448" />
+    <line x1="256" y1="64" x2="256" y2="448" />
+    <line x1="384" y1="64" x2="384" y2="448" />
   </g>
-  <g fill="#f4f1ea">
-    <circle cx="128" cy="128" r="24" />
-    <circle cx="256" cy="128" r="24" />
-    <circle cx="384" cy="128" r="24" />
-    <circle cx="128" cy="256" r="24" />
-    <circle cx="384" cy="256" r="24" />
-    <circle cx="128" cy="384" r="24" />
-    <circle cx="256" cy="384" r="24" />
-    <circle cx="384" cy="384" r="24" />
+  <g stroke="#f6f3ec" stroke-width="24" stroke-linecap="round" fill="none" mask="url(#ln-horizontal)">
+    <line x1="64" y1="128" x2="448" y2="128" />
+    <line x1="64" y1="256" x2="448" y2="256" />
+    <line x1="64" y1="384" x2="448" y2="384" />
   </g>
-  <circle cx="256" cy="256" r="34" fill="#a78bfa" />
 </svg>

@@ -2,6 +2,8 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 import type { CommandAction } from '../domain/commands';
+import Icon from './Icon';
+import type { IconName } from './Icon';
 
 export interface CommandPaletteProps {
   open: boolean;
@@ -119,6 +121,7 @@ export default function CommandPalette({ open, commands, onClose, onAnnounce }: 
       }}
     >
       <h2 className="palette__title" id={`${baseId}-title`}>
+        <Icon name="command-palette" />
         Command palette
       </h2>
       <input
@@ -181,6 +184,7 @@ export default function CommandPalette({ open, commands, onClose, onAnnounce }: 
               onClick={() => execute(option)}
             >
               <span className="palette__option-label">
+                <Icon name={CATEGORY_ICONS[option.category] ?? 'command-palette'} size={14} />
                 <span className="palette__option-category">{option.category}</span>
                 {option.label}
               </span>
@@ -203,3 +207,21 @@ function isComposing(event: ReactKeyboardEvent): boolean {
   const native = event.nativeEvent as KeyboardEvent;
   return native.isComposing || native.keyCode === 229;
 }
+
+/**
+ * The picture of every group of commands.
+ *
+ * The groups are the layers of the app, so the picture of a group tells the
+ * reader where the command belongs.
+ */
+const CATEGORY_ICONS: Record<string, IconName> = {
+  Note: 'note',
+  Folders: 'folder',
+  Files: 'files',
+  Search: 'search',
+  View: 'split',
+  Vaults: 'vaults',
+  Tabs: 'tabs',
+  Commands: 'command-palette',
+  Help: 'shortcuts',
+};

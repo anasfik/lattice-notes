@@ -106,6 +106,23 @@ describe('onboarding', () => {
     expect(text()).toContain('server');
   });
 
+  it('welcomes with the mark and the promise before the setup', async () => {
+    await renderOnboarding();
+
+    // The welcome is the first part: the mark, the name and the promise.
+    const welcome = container.querySelector('.onboarding__welcome');
+    expect(welcome).not.toBeNull();
+    expect(welcome?.querySelector('svg.onboarding__mark')).not.toBeNull();
+    expect(welcome?.querySelector('h1')?.textContent).toBe('Lattice Notes');
+    expect(text()).toContain('Your thoughts. In good company.');
+
+    // The setup is the second part, and it is named.
+    const setup = container.querySelector('.onboarding__setup');
+    expect(setup).not.toBeNull();
+    expect(setup?.querySelector('h2')?.textContent).toBe('Set up your vault');
+    expect(container.querySelector('form')?.closest('.onboarding__setup')).not.toBeNull();
+  });
+
   it('offers a blank vault, the example and a restore from an export', async () => {
     await renderOnboarding();
 

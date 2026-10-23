@@ -11,16 +11,39 @@
  * under `vault:<id>` and the catalog under `catalog`. The legacy document is
  * only ever touched by an explicit read or write of that key, never through
  * the catalog selection.
+ *
+ * Version 2 adds two stores and rewrites nothing: `settings` holds the one
+ * settings record of the app and `snapshots` holds the bodies of the notes
+ * before they were replaced. A version 1 database is upgraded in place, with
+ * its vault documents and its catalog left exactly as they were.
+ *
+ * Version 3 adds one more store and rewrites nothing either: `bookmarks`
+ * holds the bookmarks of every vault, one record per bookmark. A version 1 or
+ * a version 2 database is upgraded in place and keeps its documents, its
+ * settings and its snapshots as they were.
  */
 
 import { createEmptyVault, createNote, normalizeNoteName } from '../domain/vault';
+import { normalizeSettings } from '../domain/settings';
+import type { AppSettings } from '../domain/settings';
+import {
+  MAX_VAULT_SNAPSHOT_BYTES,
+  byteLength,
+  planSnapshotEviction,
+} from '../domain/snapshots';
+import type { Snapshot } from '../domain/snapshots';
+import type { Bookmark, BookmarkKind } from '../domain/bookmarks';
 import type { Note, Vault } from '../domain/types';
 
 const DB_NAME = 'lattice-notes';
-const DB_VERSION = 1;
+const DB_VERSION = 3;
 const STORE_NAME = 'vault';
+const SETTINGS_STORE = 'settings';
+const SNAPSHOT_STORE = 'snapshots';
+const BOOKMARK_STORE = 'bookmarks';
 const DOCUMENT_KEY = 'current';
 const CATALOG_KEY = 'catalog';
+const SETTINGS_KEY = 'settings';
 const DOCUMENT_VERSION = 1;
 const CATALOG_VERSION = 1;
 const SESSION_VERSION = 1;
@@ -29,6 +52,9 @@ const LEGACY_VAULT_ID = 'current';
 const LEGACY_VAULT_NAME = 'My vault';
 /** Ids become store keys, so they stay plain and never carry a separator. */
 const VAULT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** Counts the snapshots of this session, so two of them have an order. */
+let snapshotSequence = 0;
 
 export interface VaultMetadata {
   id: string;
@@ -143,7 +169,7 @@ export async function loadVaultSession(id: string): Promise<VaultTabSession | nu
 export async function loadCatalog(): Promise<VaultCatalog | null> {
   const db = await openDatabase();
   try {
-    const records = await readRecords(db, [CATALOG_KEY, DOCUMENT_KEY]);
+    const records = await readRecords(db, STORE_NAME, [CATALOG_KEY, DOCUMENT_KEY]);
     const stored = records.get(CATALOG_KEY);
     if (stored !== undefined && stored !== null) return parseCatalog(stored);
 
@@ -296,6 +322,431 @@ export async function restoreStoredVault(id: string): Promise<VaultCatalog> {
       );
       const next: VaultCatalog = { ...catalog, vaults };
       return { catalog: next, documents: [], result: next };
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Reads the settings of the app.
+ *
+ * A record that is missing or broken gives the defaults, so a settings file
+ * that cannot be read never stops the notes from loading. The read never
+ * writes, so it can never touch the vault.
+ */
+export async function loadSettings(): Promise<AppSettings> {
+  const db = await openDatabase();
+  try {
+    const record = await readRecords(db, SETTINGS_STORE, [SETTINGS_KEY]);
+    return normalizeSettings(record.get(SETTINGS_KEY));
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Writes the settings of the app.
+ *
+ * The settings are normalized before they are stored, so the record in the
+ * storage is always a valid one and a broken value can never come back.
+ */
+export async function saveSettings(settings: AppSettings): Promise<void> {
+  const db = await openDatabase();
+  try {
+    await writeRecord(db, SETTINGS_STORE, normalizeSettings(settings), SETTINGS_KEY);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * The snapshots of one note, the newest first.
+ *
+ * A snapshot belongs to one vault and one note, so a snapshot of another note
+ * or of another vault is never in the list.
+ */
+export async function listSnapshots(vaultId: string, noteId: string): Promise<Snapshot[]> {
+  assertVaultId(vaultId);
+  assertNoteId(noteId);
+  const db = await openDatabase();
+  try {
+    const records = await readAllRecords(db, SNAPSHOT_STORE);
+    return records
+      .filter((record): record is Snapshot =>
+        isSnapshot(record) && record.vaultId === vaultId && record.noteId === noteId)
+      .sort((a, b) => b.at - a.at || (a.key < b.key ? 1 : a.key > b.key ? -1 : 0));
+  } finally {
+    db.close();
+  }
+}
+
+/** What one snapshot write may do besides keeping the body. */
+export interface SnapshotWriteOptions {
+  /** Bodies older than this are removed in the same transaction. */
+  cutoff?: number;
+  /** The byte budget of the vault. The default is the budget of the product. */
+  budget?: number;
+}
+
+/**
+ * Stores the body of a note before it is replaced.
+ *
+ * The write is bounded: the bodies of the vault share a byte budget, so the
+ * oldest ones go first when the new one does not fit. A body that is larger
+ * than the whole budget is refused, because keeping it would empty the
+ * history of every other note. The bodies that are too old are swept in the
+ * same transaction, so an expired body never takes part in the budget.
+ *
+ * A failure rejects, so the caller can report it and carry on with the note
+ * itself.
+ */
+export async function writeSnapshot(
+  vaultId: string,
+  noteId: string,
+  body: string,
+  options: SnapshotWriteOptions = {},
+): Promise<void> {
+  assertVaultId(vaultId);
+  assertNoteId(noteId);
+  if (typeof body !== 'string') throw new Error('A note body is required.');
+  const budget = options.budget ?? MAX_VAULT_SNAPSHOT_BYTES;
+  const size = byteLength(body);
+  if (size > budget) {
+    throw new Error(
+      `The body is larger than the ${budget} byte history budget of a vault.`,
+    );
+  }
+  const at = Date.now();
+  const snapshot: Snapshot = {
+    key: newSnapshotKey(at),
+    vaultId,
+    noteId,
+    at,
+    body,
+  };
+  const db = await openDatabase();
+  try {
+    await writeSnapshotBounded(db, snapshot, size, budget, options.cutoff);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Keeps a body inside the budget of its vault, in one transaction.
+ *
+ * The expired bodies go first, then the oldest ones, until the new body fits.
+ * The transaction covers every step, so the budget is never broken halfway
+ * and a failure changes nothing.
+ */
+function writeSnapshotBounded(
+  db: IDBDatabase,
+  snapshot: Snapshot,
+  size: number,
+  budget: number,
+  cutoff: number | undefined,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(SNAPSHOT_STORE, 'readwrite');
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = (event) =>
+      reject(requestError(event) ?? new Error('The recovery history could not be written.'));
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error('The recovery history write was aborted.'));
+
+    const store = transaction.objectStore(SNAPSHOT_STORE);
+    const request = store.getAll();
+    request.onsuccess = () => {
+      try {
+        const records = (request.result as unknown[]).filter(isSnapshot);
+        const mine = records.filter((record) => record.vaultId === snapshot.vaultId);
+        const expired = cutoff === undefined ? [] : mine.filter((record) => record.at < cutoff);
+        const alive = cutoff === undefined ? mine : mine.filter((record) => record.at >= cutoff);
+        for (const record of expired) store.delete(record.key);
+        const doomed = planSnapshotEviction(
+          alive.map((record) => ({ key: record.key, at: record.at, bytes: byteLength(record.body) })),
+          size,
+          budget,
+        );
+        for (const key of doomed) store.delete(key);
+        store.put(snapshot, snapshot.key);
+      } catch (error) {
+        try {
+          transaction.abort();
+        } catch {
+          // The transaction is already ending.
+        }
+        reject(asError(error, 'The recovery history could not be written.'));
+      }
+    };
+    request.onerror = () =>
+      reject(transaction.error ?? new Error('The recovery history could not be read.'));
+  });
+}
+
+/**
+ * Frees the space of the kept bodies of a vault.
+ *
+ * The oldest bodies go first, until the vault holds at most the given number
+ * of bytes. It is the answer to a storage that refuses a write: the history
+ * gives way so the notes of the reader can be stored. Returns the number of
+ * bytes that were freed.
+ */
+export async function reclaimSnapshotSpace(
+  vaultId: string,
+  keepBytes: number = Math.floor(MAX_VAULT_SNAPSHOT_BYTES / 2),
+): Promise<number> {
+  assertVaultId(vaultId);
+  const db = await openDatabase();
+  try {
+    return await new Promise<number>((resolve, reject) => {
+      const transaction = db.transaction(SNAPSHOT_STORE, 'readwrite');
+      transaction.oncomplete = () => resolve(freed);
+      transaction.onerror = (event) =>
+        reject(requestError(event) ?? new Error('The recovery history could not be cleared.'));
+      transaction.onabort = () =>
+        reject(transaction.error ?? new Error('The recovery history clear was aborted.'));
+
+      const store = transaction.objectStore(SNAPSHOT_STORE);
+      let freed = 0;
+      const request = store.getAll();
+      request.onsuccess = () => {
+        try {
+          const mine = (request.result as unknown[])
+            .filter(isSnapshot)
+            .filter((record) => record.vaultId === vaultId);
+          const sized = mine.map((record) => ({
+            key: record.key,
+            at: record.at,
+            bytes: byteLength(record.body),
+          }));
+          let total = sized.reduce((sum, body) => sum + body.bytes, 0);
+          const oldestFirst = [...sized].sort((a, b) => a.at - b.at || (a.key < b.key ? -1 : 1));
+          for (const body of oldestFirst) {
+            if (total <= keepBytes) break;
+            store.delete(body.key);
+            total -= body.bytes;
+            freed += body.bytes;
+          }
+        } catch (error) {
+          try {
+            transaction.abort();
+          } catch {
+            // The transaction is already ending.
+          }
+          reject(asError(error, 'The recovery history could not be cleared.'));
+        }
+      };
+      request.onerror = () =>
+        reject(transaction.error ?? new Error('The recovery history could not be read.'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Removes a note from a vault for good, with its history, in one transaction.
+ *
+ * The document, the tab list and the kept bodies of the note are written and
+ * removed together: either the note is gone from the vault, from the tab
+ * list and from the history, or nothing changed at all. A failed write leaves
+ * the note and its history exactly as they were.
+ */
+export async function purgeStoredNote(
+  vaultId: string,
+  vault: Vault,
+  noteId: string,
+  session?: VaultTabSession,
+): Promise<void> {
+  assertVaultId(vaultId);
+  assertNoteId(noteId);
+  if (session !== undefined) assertSession(session);
+  const db = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction([STORE_NAME, SNAPSHOT_STORE], 'readwrite');
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = (event) =>
+        reject(requestError(event) ?? new Error('The note could not be deleted.'));
+      transaction.onabort = () =>
+        reject(transaction.error ?? new Error('The deletion of the note was aborted.'));
+
+      const store = transaction.objectStore(STORE_NAME);
+      const snapshots = transaction.objectStore(SNAPSHOT_STORE);
+      const request = snapshots.getAll();
+      request.onsuccess = () => {
+        try {
+          for (const record of request.result as unknown[]) {
+            if (isSnapshot(record) && record.vaultId === vaultId && record.noteId === noteId) {
+              snapshots.delete(record.key);
+            }
+          }
+          if (session !== undefined) store.put(session, sessionKey(vaultId));
+          store.put({ version: DOCUMENT_VERSION, vault }, documentKey(vaultId));
+        } catch (error) {
+          try {
+            transaction.abort();
+          } catch {
+            // The transaction is already ending.
+          }
+          reject(asError(error, 'The note could not be deleted.'));
+        }
+      };
+      request.onerror = () =>
+        reject(transaction.error ?? new Error('The recovery history could not be read.'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Reads one snapshot.
+ *
+ * Resolves `null` when the key is unknown or when the record is broken, so a
+ * broken snapshot never stops the list of the others.
+ */
+export async function readSnapshot(key: string): Promise<Snapshot | null> {
+  assertSnapshotKey(key);
+  const db = await openDatabase();
+  try {
+    const records = await readRecords(db, SNAPSHOT_STORE, [key]);
+    const record = records.get(key);
+    return isSnapshot(record) ? record : null;
+  } finally {
+    db.close();
+  }
+}
+
+/** Removes one snapshot. */
+export async function deleteSnapshot(key: string): Promise<void> {
+  assertSnapshotKey(key);
+  const db = await openDatabase();
+  try {
+    await deleteRecord(db, SNAPSHOT_STORE, key);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Removes the snapshots of one vault that are older than the cutoff.
+ *
+ * The snapshots of the other vaults and the ones inside the window stay.
+ * Returns how many snapshots were removed.
+ */
+export async function pruneSnapshots(vaultId: string, cutoff: number): Promise<number> {
+  assertVaultId(vaultId);
+  if (!Number.isFinite(cutoff)) throw new Error('A cutoff is required.');
+  const db = await openDatabase();
+  try {
+    const records = await readAllRecords(db, SNAPSHOT_STORE);
+    const doomed = records.filter(
+      (record): record is Snapshot =>
+        isSnapshot(record) && record.vaultId === vaultId && record.at < cutoff,
+    );
+    for (const snapshot of doomed) {
+      await deleteRecord(db, SNAPSHOT_STORE, snapshot.key);
+    }
+    return doomed.length;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * The bookmarks of one vault, and the records that could not be read.
+ */
+export interface BookmarkRead {
+  /** The bookmarks of the vault that could be read. */
+  bookmarks: Bookmark[];
+  /** How many records were too broken to be a bookmark. */
+  dropped: number;
+}
+
+/**
+ * Reads the bookmarks of a vault.
+ *
+ * A record that is not a bookmark is dropped and counted, so a broken
+ * bookmark never stops the notes of the vault from loading. The bookmarks of
+ * another vault are never in the list.
+ */
+export async function loadBookmarks(vaultId: string): Promise<BookmarkRead> {
+  assertVaultId(vaultId);
+  const db = await openDatabase();
+  try {
+    const records = await readAllRecords(db, BOOKMARK_STORE);
+    const bookmarks: Bookmark[] = [];
+    let dropped = 0;
+    for (const record of records) {
+      // A record that names another vault is not the business of this read,
+      // so only a broken record of this vault is counted as dropped.
+      if (!isStoredBookmark(record)) {
+        const claimed = isRecord(record) ? (record as { vaultId?: unknown }).vaultId : undefined;
+        if (claimed !== undefined && claimed !== vaultId) continue;
+        dropped += 1;
+        continue;
+      }
+      if (record.vaultId !== vaultId) continue;
+      bookmarks.push({
+        id: record.id,
+        kind: record.kind,
+        target: record.target,
+        title: record.title,
+        group: record.group,
+      });
+    }
+    return { bookmarks, dropped };
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Writes the bookmarks of a vault.
+ *
+ * The list of the vault is replaced in one transaction: the records that are
+ * gone are deleted and the new ones are written, so a half written list never
+ * lands in the storage. A write that fails rejects, so the caller can report
+ * it and carry on with the notes.
+ */
+export async function saveBookmarks(vaultId: string, bookmarks: Bookmark[]): Promise<void> {
+  assertVaultId(vaultId);
+  const db = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(BOOKMARK_STORE, 'readwrite');
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = (event) =>
+        reject(requestError(event) ?? new Error('The bookmarks could not be written.'));
+      transaction.onabort = () =>
+        reject(transaction.error ?? new Error('The bookmark write was aborted.'));
+
+      const store = transaction.objectStore(BOOKMARK_STORE);
+      const request = store.getAll();
+      request.onsuccess = () => {
+        try {
+          for (const record of request.result as unknown[]) {
+            if (!isStoredBookmark(record)) continue;
+            if (record.vaultId !== vaultId) continue;
+            store.delete(bookmarkKey(vaultId, record.id));
+          }
+          for (const bookmark of bookmarks) {
+            store.put({ ...bookmark, vaultId }, bookmarkKey(vaultId, bookmark.id));
+          }
+        } catch (error) {
+          try {
+            transaction.abort();
+          } catch {
+            // The transaction is already ending.
+          }
+          reject(asError(error, 'The bookmarks could not be written.'));
+        }
+      };
+      request.onerror = () =>
+        reject(transaction.error ?? new Error('The bookmarks could not be read.'));
     });
   } finally {
     db.close();
@@ -525,6 +976,13 @@ function openDatabase(): Promise<IDBDatabase> {
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+      // The stores of version 2 are added and nothing else is touched, so a
+      // version 1 database keeps its documents and its catalog as they were.
+      if (!db.objectStoreNames.contains(SETTINGS_STORE)) db.createObjectStore(SETTINGS_STORE);
+      if (!db.objectStoreNames.contains(SNAPSHOT_STORE)) db.createObjectStore(SNAPSHOT_STORE);
+      // The store of the bookmarks is added in version 3 and rewrites nothing,
+      // so a version 1 and a version 2 database keep everything they had.
+      if (!db.objectStoreNames.contains(BOOKMARK_STORE)) db.createObjectStore(BOOKMARK_STORE);
     };
     request.onsuccess = () => {
       // A connection that arrives after the request was rejected must not leak.
@@ -533,7 +991,15 @@ function openDatabase(): Promise<IDBDatabase> {
         return;
       }
       settled = true;
-      resolve(request.result);
+      const db = request.result;
+      // Another tab that opens a newer version of the database waits for the
+      // open connections to go. This one closes itself when the version
+      // changes, so the other tab is not held up by a tab that is not looking
+      // at the screen any more.
+      db.onversionchange = () => {
+        db.close();
+      };
+      resolve(db);
     };
     request.onerror = () => {
       if (settled) return;
@@ -550,14 +1016,17 @@ function openDatabase(): Promise<IDBDatabase> {
 
 /** Reads one stored record. */
 function readDocument(db: IDBDatabase, key: string): Promise<unknown> {
-  return readRecords(db, [key]).then((records) => records.get(key));
+  return readRecords(db, STORE_NAME, [key]).then((records) => records.get(key));
 }
 
 /** Reads several stored records in one readonly transaction. */
-function readRecords(db: IDBDatabase, keys: readonly string[]): Promise<Map<string, unknown>> {
+function readRecords(
+  db: IDBDatabase,
+  store: string,
+  keys: readonly string[],
+): Promise<Map<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
+    const transaction = db.transaction(store, 'readonly');
     const records = new Map<string, unknown>();
     let pending = keys.length;
 
@@ -573,7 +1042,7 @@ function readRecords(db: IDBDatabase, keys: readonly string[]): Promise<Map<stri
     };
 
     for (const key of keys) {
-      const request = store.get(key);
+      const request = transaction.objectStore(store).get(key);
       request.onsuccess = () => {
         records.set(key, request.result);
         ready();
@@ -582,16 +1051,56 @@ function readRecords(db: IDBDatabase, keys: readonly string[]): Promise<Map<stri
   });
 }
 
-/** Writes one stored document. */
-function writeDocument(db: IDBDatabase, document: VaultDocument, key: string): Promise<void> {
+/** Reads every record of a store in one readonly transaction. */
+function readAllRecords(db: IDBDatabase, store: string): Promise<unknown[]> {
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readwrite');
+    const transaction = db.transaction(store, 'readonly');
+    transaction.onerror = (event) =>
+      reject(requestError(event) ?? new Error('The local records could not be read.'));
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error('The local records read was aborted.'));
+
+    const request = transaction.objectStore(store).getAll();
+    request.onsuccess = () => resolve(request.result as unknown[]);
+    request.onerror = (event) =>
+      reject(requestError(event) ?? new Error('The local records could not be read.'));
+  });
+}
+
+/** Writes one record into a store. */
+function writeRecord(
+  db: IDBDatabase,
+  store: string,
+  value: unknown,
+  key: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(store, 'readwrite');
     transaction.oncomplete = () => resolve();
     transaction.onerror = (event) =>
-      reject(requestError(event) ?? new Error('The local vault could not be written.'));
-    transaction.onabort = () => reject(transaction.error ?? new Error('The local vault write was aborted.'));
-    transaction.objectStore(STORE_NAME).put(document, key);
+      reject(requestError(event) ?? new Error('The local record could not be written.'));
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error('The local record write was aborted.'));
+    transaction.objectStore(store).put(value, key);
   });
+}
+
+/** Removes one record from a store. */
+function deleteRecord(db: IDBDatabase, store: string, key: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(store, 'readwrite');
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = (event) =>
+      reject(requestError(event) ?? new Error('The local record could not be removed.'));
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error('The local record removal was aborted.'));
+    transaction.objectStore(store).delete(key);
+  });
+}
+
+/** Writes one stored document. */
+function writeDocument(db: IDBDatabase, document: VaultDocument, key: string): Promise<void> {
+  return writeRecord(db, STORE_NAME, document, key);
 }
 
 /**
@@ -681,6 +1190,70 @@ function sessionKey(id: string): string {
 function assertVaultId(id: string): void {
   if (typeof id !== 'string' || id.length === 0) throw new Error('A vault id is required.');
   if (!VAULT_ID_PATTERN.test(id)) throw new Error(`The vault id "${id}" is not valid.`);
+}
+
+/** Rejects a note id that cannot belong to a snapshot. */
+function assertNoteId(id: string): void {
+  if (typeof id !== 'string' || id.length === 0) throw new Error('A note id is required.');
+}
+
+/** Rejects a snapshot key that cannot address a record. */
+function assertSnapshotKey(key: string): void {
+  if (typeof key !== 'string' || key.length === 0) throw new Error('A snapshot key is required.');
+}
+
+/** True for a record that is a snapshot of a note. */
+function isSnapshot(value: unknown): value is Snapshot {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.key === 'string' &&
+    typeof value.vaultId === 'string' &&
+    typeof value.noteId === 'string' &&
+    typeof value.at === 'number' &&
+    Number.isFinite(value.at) &&
+    typeof value.body === 'string'
+  );
+}
+
+/** A bookmark as it is stored: it belongs to a vault. */
+interface StoredBookmark extends Bookmark {
+  vaultId: string;
+}
+
+/** True for a record that is a bookmark of a vault. */
+function isStoredBookmark(value: unknown): value is StoredBookmark {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === 'string' &&
+    typeof value.vaultId === 'string' &&
+    isBookmarkKind(value.kind) &&
+    typeof value.target === 'string' &&
+    typeof value.title === 'string' &&
+    typeof value.group === 'string'
+  );
+}
+
+/** True for a kind of bookmark the product knows. */
+function isBookmarkKind(value: unknown): value is BookmarkKind {
+  return value === 'note' || value === 'heading' || value === 'search';
+}
+
+/** The store key of a bookmark. The vault is part of it, so two vaults never meet. */
+function bookmarkKey(vaultId: string, id: string): string {
+  return `bookmark:${vaultId}:${id}`;
+}
+
+/** A fresh key for a snapshot. */
+function newSnapshotKey(at: number): string {
+  const source = globalThis.crypto;
+  const random =
+    source && typeof source.randomUUID === 'function'
+      ? source.randomUUID()
+      : Math.random().toString(36).slice(2, 10);
+  // The key grows with the clock, so two snapshots of the same millisecond
+  // still have an order and the newest one is always the first of the list.
+  snapshotSequence += 1;
+  return `${String(at).padStart(16, '0')}-${snapshotSequence.toString(36)}-${random}`;
 }
 
 /** Normalizes a display name the way note names are normalized. */

@@ -14,6 +14,7 @@ import {
 } from '../domain/graphView';
 import type { Camera, Point3, ScreenPoint } from '../domain/graphView';
 import type { Vault } from '../domain/types';
+import Icon from './Icon';
 
 export interface GraphViewProps {
   /** True when the graph is on the screen. */
@@ -32,6 +33,28 @@ export interface GraphViewProps {
 const VIEW_WIDTH = 1000;
 const VIEW_HEIGHT = 700;
 const VIEWPORT = { width: VIEW_WIDTH, height: VIEW_HEIGHT };
+
+/** The size of a label in the world of the picture, in world units. */
+const LABEL_SIZE = 12;
+
+/** The smallest size a label may have on the screen, in CSS pixels. */
+const MIN_LABEL_SIZE = 11;
+
+/** The longest name a label shows before it is cut short. */
+const LABEL_LENGTH = 24;
+
+/**
+ * The size of a label in the world of the picture.
+ *
+ * The picture is scaled to the width of the screen, so a label that keeps
+ * its size in the world of the picture is unreadable on a phone. The size
+ * grows with the shrink of the picture, so the label is at least
+ * {@link MIN_LABEL_SIZE} CSS pixels on the screen.
+ */
+export function labelFontSize(scale: number): number {
+  if (!Number.isFinite(scale) || scale <= 0) return LABEL_SIZE;
+  return Math.max(LABEL_SIZE, MIN_LABEL_SIZE / scale);
+}
 
 /** How far the camera pans with one step of the keyboard. */
 const PAN_STEP = 40;
@@ -93,6 +116,14 @@ export default function GraphView({
   const [filter, setFilter] = useState('');
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /**
+   * How much the picture is scaled down on the screen.
+   *
+   * The picture is drawn in a world of its own and scaled to the width of
+   * the screen, so the scale is what the labels and the dots are measured
+   * against.
+   */
+  const [scale, setScale] = useState(1);
   // Editing must not parse the whole vault for a closed supporting view.
   const model = useMemo(() => open ? buildGraphModel(vault) : { nodes: [], edges: [] }, [open, vault]);
   /** The camera the reader is aiming at. It opens with every note in sight. */
@@ -271,6 +302,27 @@ export default function GraphView({
     element.addEventListener('wheel', onWheel, { passive: false });
     return () => element.removeEventListener('wheel', onWheel);
   }, [moveCamera, open]);
+
+  /**
+   * Measures how much the picture is scaled down on the screen.
+   *
+   * The measurement is taken when the graph opens and whenever the picture
+   * changes its size, so the labels of the notes stay readable. Nothing is
+   * measured in a loop.
+   */
+  useEffect(() => {
+    const element = surfaceRef.current;
+    if (!element || !open) return;
+    const measure = () => {
+      const width = element.clientWidth;
+      if (width > 0) setScale(width / VIEW_WIDTH);
+    };
+    measure();
+    if (typeof ResizeObserver !== 'function') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [open]);
 
   /** Pans the picture with the keyboard. */
   const pan = (key: string) => {
@@ -451,7 +503,9 @@ export default function GraphView({
     onClose();
   };
 
-  const showLabels = drawable.drawn <= 30;
+  const showLabels = drawable.drawn <= 30 && scale >= 0.5;
+  /** The size of a label in the world of the picture. */
+  const labelSize = labelFontSize(scale);
 
   return (
     <dialog
@@ -476,7 +530,7 @@ export default function GraphView({
             aria-label="Close the graph"
             onClick={onClose}
           >
-            <span aria-hidden="true">×</span>
+            <Icon name="close" />
           </button>
         </header>
 
@@ -489,7 +543,7 @@ export default function GraphView({
               moveCamera({ ...targetRef.current, zoom: targetRef.current.zoom * ZOOM_STEP })
             }
           >
-            <span aria-hidden="true">+</span>
+            <Icon name="zoom-in" />
           </button>
           <button
             type="button"
@@ -499,7 +553,7 @@ export default function GraphView({
               moveCamera({ ...targetRef.current, zoom: targetRef.current.zoom / ZOOM_STEP })
             }
           >
-            <span aria-hidden="true">−</span>
+            <Icon name="zoom-out" />
           </button>
           <button
             type="button"
@@ -507,6 +561,7 @@ export default function GraphView({
             aria-label="Fit the graph"
             onClick={() => moveCamera(fitCamera(model.nodes, VIEWPORT))}
           >
+            <Icon name="fit" size={14} />
             Fit
           </button>
           <button
@@ -515,6 +570,7 @@ export default function GraphView({
             aria-label="Reset the camera"
             onClick={() => moveCamera(resetCamera())}
           >
+            <Icon name="reset" size={14} />
             Reset
           </button>
 
@@ -528,6 +584,7 @@ export default function GraphView({
                 checked={dimension === '2d'}
                 onChange={() => setDimension('2d')}
               />
+              <Icon name="flat" size={14} />
               <span>2D</span>
             </label>
             <label className="graphview__mode">
@@ -538,6 +595,7 @@ export default function GraphView({
                 checked={dimension === '3d'}
                 onChange={() => setDimension('3d')}
               />
+              <Icon name="solid" size={14} />
               <span>3D</span>
             </label>
           </fieldset>
@@ -552,6 +610,7 @@ export default function GraphView({
                 checked={mode === 'orbit'}
                 onChange={() => setMode('orbit')}
               />
+              <Icon name="orbit" size={14} />
               <span>Orbit</span>
             </label>
             <label className="graphview__mode">
@@ -562,6 +621,7 @@ export default function GraphView({
                 checked={mode === 'move'}
                 onChange={() => setMode('move')}
               />
+              <Icon name="move" size={14} />
               <span>Move</span>
             </label>
           </fieldset>
@@ -632,8 +692,13 @@ export default function GraphView({
                       r={isSelected ? 9 : 6}
                     />
                     {showLabels || isSelected ? (
-                      <text className="graphview__label" x={round(point.x)} y={round(point.y) - 12}>
-                        {node.name}
+                      <text
+                        className="graphview__label"
+                        x={round(point.x)}
+                        y={round(point.y - labelSize - 4)}
+                        fontSize={round(labelSize)}
+                      >
+                        {truncateLabel(node.name)}
                       </text>
                     ) : null}
                   </g>
@@ -693,6 +758,7 @@ export default function GraphView({
                 disabled={notes.page <= 1}
                 onClick={() => setPage((current) => Math.max(1, current - 1))}
               >
+                <Icon name="previous" size={14} />
                 Previous
               </button>
               <span className="graphview__page">
@@ -706,6 +772,7 @@ export default function GraphView({
                 onClick={() => setPage((current) => Math.min(notes.pages, current + 1))}
               >
                 Next
+                <Icon name="next" size={14} />
               </button>
             </div>
 
@@ -784,4 +851,14 @@ function isEditable(target: EventTarget | null): boolean {
 /** A number with two decimals, so the picture stays readable. */
 function round(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+/**
+ * The name of a note, cut short when it is too long.
+ *
+ * The whole name stays in the title of the note, so nothing is lost.
+ */
+function truncateLabel(name: string): string {
+  if (name.length <= LABEL_LENGTH) return name;
+  return `${name.slice(0, LABEL_LENGTH - 1)}…`;
 }

@@ -7,6 +7,8 @@ export interface EditorProps {
   textareaRef?: RefObject<HTMLTextAreaElement | null>;
   /** True while another view shows the note, so the field is not on screen. */
   hidden?: boolean;
+  /** True when the browser marks the words it does not know. */
+  spellcheck?: boolean;
   onChange(body: string): void;
 }
 
@@ -16,7 +18,7 @@ export interface EditorProps {
  * The field stays mounted in every view and is only hidden, so a draft and
  * the caret of the writer survive a change of the view.
  */
-export default function Editor({ note, textareaRef, hidden, onChange }: EditorProps) {
+export default function Editor({ note, textareaRef, hidden, spellcheck = false, onChange }: EditorProps) {
   return (
     <section className="editor" aria-label="Markdown editor" hidden={hidden}>
       <label className="editor__label" htmlFor="note-editor">
@@ -28,7 +30,7 @@ export default function Editor({ note, textareaRef, hidden, onChange }: EditorPr
         className="editor__textarea"
         value={note?.body ?? ''}
         disabled={!note}
-        spellCheck={false}
+        spellCheck={spellcheck}
         onChange={(event) => onChange(event.target.value)}
       />
       {note ? null : (

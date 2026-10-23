@@ -1,6 +1,6 @@
 import { Fragment, type ReactNode, type RefObject } from 'react';
 
-import { parseNote } from '../domain/markdown';
+import { headingId, parseNote } from '../domain/markdown';
 import type { BlockNode, InlineNode } from '../domain/markdown';
 import { normalizeNoteName } from '../domain/vault';
 
@@ -27,6 +27,9 @@ interface RenderContext {
  * markup. Ordinary links become anchors with the vetted href, wiki links
  * become buttons that ask the app to select a note. A wiki link without a
  * target names the note it would create, so the outcome is never a surprise.
+ *
+ * Every heading carries the id of its place in the note, so the outline of the
+ * note can link to the heading it names.
  */
 export default function Preview({
   body,
@@ -37,6 +40,16 @@ export default function Preview({
 }: PreviewProps) {
   const parsed = parseNote(body);
   const context: RenderContext = { onWikiLink, existingNames };
+
+  // The id of every heading, by the block it belongs to. The headings of the
+  // parser and the heading blocks of the note are in the same order, so the
+  // two always agree.
+  const headingIds = new Map<number, string>();
+  parsed.blocks.forEach((block, index) => {
+    if (block.kind !== 'heading') return;
+    const number = headingIds.size;
+    headingIds.set(index, headingId(parsed.headings[number]?.text ?? '', number));
+  });
 
   return (
     <section
@@ -57,28 +70,38 @@ export default function Preview({
             Nothing to preview yet. It follows the Markdown you write in the editor.
           </p>
         ) : (
-          parsed.blocks.map((block, index) => renderBlock(block, index, context))
+          parsed.blocks.map((block, index) =>
+            renderBlock(block, index, context, headingIds.get(index)),
+          )
         )}
       </div>
     </section>
   );
 }
 
-function renderBlock(block: BlockNode, key: number, context: RenderContext): ReactNode {
+function renderBlock(
+  block: BlockNode,
+  key: number,
+  context: RenderContext,
+  headingIdValue?: string,
+): ReactNode {
   switch (block.kind) {
     case 'heading': {
       const content = renderInline(block.inline, context);
+      // The heading can take the keyboard, so the outline can put the reader
+      // on the place it names.
+      const props = { id: headingIdValue, tabIndex: -1 };
       switch (block.level) {
         case 1:
-          return <h2 key={key}>{content}</h2>;
+          return <h2 key={key} {...props}>{content}</h2>;
         case 2:
-          return <h3 key={key}>{content}</h3>;
+          return <h3 key={key} {...props}>{content}</h3>;
         case 3:
-          return <h4 key={key}>{content}</h4>;
+          return <h4 key={key} {...props}>{content}</h4>;
         case 4:
-          return <h5 key={key}>{content}</h5>;
+          return <h5 key={key} {...props}>{content}</h5>;
         default:
-          return <h6 key={key}>{content}</h6>;
+          return <h6 key={key} {...props}>{content}</h6>;
       }
     }
     case 'paragraph':

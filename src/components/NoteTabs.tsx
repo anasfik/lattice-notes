@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 
 import type { Note } from '../domain/types';
+import Icon from './Icon';
 
 export interface NoteTabsProps {
   /** The open notes, in the order of the strip. */
@@ -60,7 +61,7 @@ export default function NoteTabs({
             aria-label={`Close ${note.name}`}
             onClick={() => onClose(note.id)}
           >
-            <span aria-hidden="true">×</span>
+            <Icon name="close" size={14} />
           </button>
         </div>
       ))}

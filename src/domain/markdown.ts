@@ -92,6 +92,22 @@ export function toPlainText(body: string): string {
   return blocksToText(parseBlocks(body));
 }
 
+/**
+ * The id of a heading.
+ *
+ * The id follows from the text of the heading and from its place in the note,
+ * so two headings with the same text never share an id and the outline can
+ * link to every one of them. The same heading always gets the same id, so the
+ * preview and the outline never disagree.
+ */
+export function headingId(text: string, index: number): string {
+  const slug = text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug ? `${slug}-${index}` : `heading-${index}`;
+}
+
 function parseBlocks(body: string): BlockNode[] {
   const lines = body.replace(/\r\n?/g, '\n').split('\n');
   const blocks: BlockNode[] = [];

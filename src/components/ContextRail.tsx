@@ -5,6 +5,7 @@ import { normalizeNoteName } from '../domain/vault';
 import type { LocalGraph } from '../domain/vault';
 import type { Note } from '../domain/types';
 import Graph from './Graph';
+import Icon from './Icon';
 
 /** Shown while the graph trails the vault, so no false empty state appears. */
 export const GRAPH_PENDING_TEXT = 'Updating links…';
@@ -55,6 +56,7 @@ export default function ContextRail({
         <>
           <nav className="context__section" aria-label="Backlinks" aria-busy={graphPending}>
             <h3 className="context__heading">
+              <Icon name="backlinks" size={14} />
               {graphPending ? 'Backlinks' : `Backlinks (${backlinks.length})`}
             </h3>
             {backlinks.length > 0 ? (
@@ -79,7 +81,10 @@ export default function ContextRail({
           </nav>
 
           <nav className="context__section" aria-label="Outgoing links">
-            <h3 className="context__heading">Links ({links.length})</h3>
+            <h3 className="context__heading">
+              <Icon name="links" size={14} />
+              Links ({links.length})
+            </h3>
             {links.length > 0 ? (
               <ul className="context__list context__links" role="list">
                 {links.map((link) => {
@@ -107,6 +112,7 @@ export default function ContextRail({
           <section className="context__section" aria-labelledby="context-graph">
             <div className="context__heading-row">
               <h3 className="context__heading" id="context-graph">
+                <Icon name="graph" size={14} />
                 Graph
               </h3>
               {onOpenGraph ? (
@@ -115,6 +121,7 @@ export default function ContextRail({
                   className="context__graph-open"
                   onClick={onOpenGraph}
                 >
+                  <Icon name="fit" size={14} />
                   Fullscreen graph
                 </button>
               ) : null}
@@ -131,6 +138,7 @@ export default function ContextRail({
           {/* The metadata of the note is a footnote, not the subject. */}
           <section className="context__section context__details" aria-labelledby="context-details">
             <h3 className="context__heading" id="context-details">
+              <Icon name="details" size={14} />
               Details
             </h3>
             <dl className="context__meta">

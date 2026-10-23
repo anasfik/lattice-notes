@@ -2,7 +2,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import GraphView from './GraphView';
+import GraphView, { labelFontSize } from './GraphView';
 import { createEmptyVault, createNote } from '../domain/vault';
 import type { Vault } from '../domain/types';
 
@@ -401,5 +401,39 @@ describe('the frames of the graph', () => {
 
     expect(frames.requests).toBe(0);
     expect(Number(surface().getAttribute('data-camera-yaw'))).toBeGreaterThan(0);
+  });
+});
+
+describe('the labels of the graph', () => {
+  it('keeps a label readable when the picture is scaled down', () => {
+    // The picture of the graph is scaled to the width of the screen, so the
+    // size of a label in the world of the picture has to grow with the
+    // shrink of the picture, or the label is unreadable on a phone.
+    expect(labelFontSize(0.3)).toBeGreaterThanOrEqual(11 / 0.3);
+    expect(labelFontSize(1)).toBe(12);
+    // A picture that cannot be measured keeps the size it had.
+    expect(labelFontSize(0)).toBe(12);
+  });
+
+  it('gives the label of a note a size in the world of the picture', async () => {
+    await render(ringVault(3));
+
+    const label = container.querySelector<SVGTextElement>('.graphview__label');
+    expect(label).not.toBeNull();
+    expect(Number(label?.getAttribute('font-size'))).toBeGreaterThanOrEqual(12);
+  });
+
+  it('cuts a long name short and keeps the whole name in the title', async () => {
+    const created = createNote(createEmptyVault(), 'A very long name of a note that goes on and on');
+    await render({ ...created.vault, activeNoteId: created.note.id });
+
+    const label = container.querySelector<SVGTextElement>('.graphview__label');
+    expect(label?.textContent?.length).toBeLessThanOrEqual(24);
+    expect(label?.textContent).toContain('…');
+    // The whole name is still there, for the reader who wants it.
+    const group = label?.closest('[data-node-id]');
+    expect(group?.querySelector('title')?.textContent).toBe(
+      'A very long name of a note that goes on and on',
+    );
   });
 });

@@ -5,6 +5,7 @@ import { activeNotes, createEmptyVault } from '../domain/vault';
 import { MAX_ENVELOPE_BYTES, importEnvelope } from '../domain/transfer';
 import type { Vault } from '../domain/types';
 import { createSeedVault } from '../storage/vaultRepository';
+import BrandMark from './BrandMark';
 
 export interface OnboardingProps {
   /** Creates the vault and enters the workspace. */
@@ -109,92 +110,105 @@ export default function Onboarding({ onCreate }: OnboardingProps) {
   return (
     <main className="onboarding" aria-label="Welcome to Lattice Notes">
       <div className="onboarding__panel">
-        <h1 className="onboarding__title">Lattice Notes</h1>
+        <header className="onboarding__welcome">
+          <BrandMark className="onboarding__mark" />
+          <div>
+            <p className="onboarding__eyebrow">A local writing desk</p>
+            <h1 className="onboarding__title">Lattice Notes</h1>
+            <p className="onboarding__promise">Your thoughts. In good company.</p>
+          </div>
+        </header>
+
         <p className="onboarding__intro">
           Your notes stay in this browser. There is no account and no server, and nothing is uploaded.
           Clearing the browser data deletes them, so export a backup now and then.
         </p>
 
-        <form className="onboarding__form" onSubmit={handleSubmit}>
-          <label className="onboarding__label" htmlFor="onboarding-name">
-            Vault name
-          </label>
-          <input
-            id="onboarding-name"
-            className="onboarding__name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-          />
+        <section className="onboarding__setup" aria-labelledby="onboarding-setup-title">
+          <h2 className="onboarding__setup-title" id="onboarding-setup-title">
+            Set up your vault
+          </h2>
+          <form className="onboarding__form" onSubmit={handleSubmit}>
+            <label className="onboarding__label" htmlFor="onboarding-name">
+              Vault name
+            </label>
+            <input
+              id="onboarding-name"
+              className="onboarding__name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
 
-          <fieldset className="onboarding__choices">
-            <legend className="onboarding__legend">What should the vault hold?</legend>
-            <label className="onboarding__choice">
-              <input
-                type="radio"
-                name="onboarding-kind"
-                value="blank"
-                checked={choice === 'blank'}
-                onChange={() => setChoice('blank')}
-              />
-              <span>Start with an empty vault</span>
-            </label>
-            <label className="onboarding__choice">
-              <input
-                type="radio"
-                name="onboarding-kind"
-                value="example"
-                checked={choice === 'example'}
-                onChange={() => setChoice('example')}
-              />
-              <span>Start with the example notes</span>
-            </label>
-            <label className="onboarding__choice">
-              <input
-                type="radio"
-                name="onboarding-kind"
-                value="restore"
-                checked={choice === 'restore'}
-                onChange={() => setChoice('restore')}
-              />
-              <span>Restore a backup from a JSON export</span>
-            </label>
-          </fieldset>
-
-          {choice === 'restore' ? (
-            <div className="onboarding__restore">
-              <label className="onboarding__label" htmlFor="onboarding-backup">
-                Lattice Notes export file
+            <fieldset className="onboarding__choices">
+              <legend className="onboarding__legend">What should the vault hold?</legend>
+              <label className="onboarding__choice">
+                <input
+                  type="radio"
+                  name="onboarding-kind"
+                  value="blank"
+                  checked={choice === 'blank'}
+                  onChange={() => setChoice('blank')}
+                />
+                <span>Start with an empty vault</span>
               </label>
-              <input
-                id="onboarding-backup"
-                className="onboarding__file"
-                type="file"
-                accept=".json,application/json"
-                onChange={handleBackup}
-              />
-              {backupError ? (
-                <p className="onboarding__error" role="alert">
-                  {backupError}
-                </p>
-              ) : null}
-              {backup ? (
-                <p className="onboarding__note">
-                  The backup holds {activeNotes(backup).length} notes and is ready to restore.
-                </p>
-              ) : null}
-            </div>
-          ) : null}
+              <label className="onboarding__choice">
+                <input
+                  type="radio"
+                  name="onboarding-kind"
+                  value="example"
+                  checked={choice === 'example'}
+                  onChange={() => setChoice('example')}
+                />
+                <span>Start with the example notes</span>
+              </label>
+              <label className="onboarding__choice">
+                <input
+                  type="radio"
+                  name="onboarding-kind"
+                  value="restore"
+                  checked={choice === 'restore'}
+                  onChange={() => setChoice('restore')}
+                />
+                <span>Restore a backup from a JSON export</span>
+              </label>
+            </fieldset>
 
-          {error ? (
-            <p className="onboarding__error" role="alert">
-              {error}
-            </p>
-          ) : null}
+            {choice === 'restore' ? (
+              <div className="onboarding__restore">
+                <label className="onboarding__label" htmlFor="onboarding-backup">
+                  Lattice Notes export file
+                </label>
+                <input
+                  id="onboarding-backup"
+                  className="onboarding__file"
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleBackup}
+                />
+                {backupError ? (
+                  <p className="onboarding__error" role="alert">
+                    {backupError}
+                  </p>
+                ) : null}
+                {backup ? (
+                  <p className="onboarding__note">
+                    The backup holds {activeNotes(backup).length} notes and is ready to restore.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
-          <button type="submit" className="onboarding__create" disabled={busy}>
-            {busy ? 'Creating…' : 'Create vault'}
-          </button>
-        </form>
+            {error ? (
+              <p className="onboarding__error" role="alert">
+                {error}
+              </p>
+            ) : null}
+
+            <button type="submit" className="onboarding__create" disabled={busy}>
+              {busy ? 'Creating…' : 'Create vault'}
+            </button>
+          </form>
+        </section>
       </div>
     </main>
   );

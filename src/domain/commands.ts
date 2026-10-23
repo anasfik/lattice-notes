@@ -35,11 +35,17 @@ export interface CommandAvailability {
   openTabCount: number;
   /** True when the context panel can be folded away, so on a narrow screen. */
   contextPanelToggleable: boolean;
+  /** True when there is a note to go back to. */
+  canGoBack: boolean;
+  /** True when there is a note to go forward to. */
+  canGoForward: boolean;
 }
 
 /** The real handlers of the commands. */
 export interface CommandHandlers {
   createNote(): void;
+  /** Opens the form of a new folder. */
+  createFolder(): void;
   renameNote(): void;
   trashNote(): void;
   undo(): void;
@@ -47,6 +53,10 @@ export interface CommandHandlers {
   exportVault(): void;
   setViewMode(mode: ViewMode): void;
   openSwitcher(): void;
+  /** Opens the palette of the commands. */
+  openPalette(): void;
+  /** Opens the list of the shortcuts. */
+  openShortcutHelp(): void;
   focusSearch(): void;
   openVaultManager(): void;
   toggleContextPanel(): void;
@@ -59,6 +69,22 @@ export interface CommandHandlers {
   openCalendar(): void;
   /** Opens the fullscreen graph of the vault. */
   openGraph(): void;
+  /** Opens the settings of the app. */
+  openSettings(): void;
+  /** Opens the recovery history of the note on the screen. */
+  openRecovery(): void;
+  /** Asks for the confirmation of the permanent delete. */
+  deletePermanent(): void;
+  /** Goes back to the note the reader came from. */
+  goBack(): void;
+  /** Goes forward to the note the reader left. */
+  goForward(): void;
+  /** Adds the note on the screen to the bookmarks, or takes it off. */
+  toggleBookmark(): void;
+  /** Shows the outline of the note, or hides it. */
+  toggleOutline(): void;
+  /** Shows the bookmarks, or hides them. */
+  toggleBookmarksPanel(): void;
 }
 
 /**
@@ -81,9 +107,16 @@ export function buildCommands(
       run: handlers.createNote,
     },
     {
+      id: 'folder.new',
+      label: 'New folder',
+      category: 'Folders',
+      run: handlers.createFolder,
+    },
+    {
       id: 'note.rename',
       label: 'Rename note',
       category: 'Note',
+      shortcut: 'F2',
       disabledReason: availability.hasActiveNote ? undefined : 'Open a note first',
       run: handlers.renameNote,
     },
@@ -102,9 +135,31 @@ export function buildCommands(
       run: handlers.undo,
     },
     {
+      id: 'note.recover',
+      label: 'Recover note',
+      category: 'Note',
+      disabledReason: availability.hasActiveNote ? undefined : 'Open a note first',
+      run: handlers.openRecovery,
+    },
+    {
+      id: 'note.bookmark',
+      label: 'Bookmark note',
+      category: 'Note',
+      disabledReason: availability.hasActiveNote ? undefined : 'Open a note first',
+      run: handlers.toggleBookmark,
+    },
+    {
+      id: 'note.deletePermanent',
+      label: 'Delete note permanently',
+      category: 'Note',
+      disabledReason: availability.hasActiveNote ? undefined : 'Open a note first',
+      run: handlers.deletePermanent,
+    },
+    {
       id: 'note.daily',
       label: "Open today's daily note",
       category: 'Note',
+      shortcut: 'Alt+T',
       run: handlers.openDailyNote,
     },
     {
@@ -113,6 +168,13 @@ export function buildCommands(
       category: 'Note',
       shortcut: 'Ctrl/Cmd+P',
       run: handlers.openSwitcher,
+    },
+    {
+      id: 'command.palette',
+      label: 'Command palette',
+      category: 'Commands',
+      shortcut: 'Ctrl/Cmd+K',
+      run: handlers.openPalette,
     },
     {
       id: 'files.import',
@@ -154,12 +216,14 @@ export function buildCommands(
       id: 'view.calendar',
       label: 'Open the calendar',
       category: 'View',
+      shortcut: 'Alt+C',
       run: handlers.openCalendar,
     },
     {
       id: 'view.graph',
       label: 'Open the fullscreen graph',
       category: 'View',
+      shortcut: 'Alt+G',
       run: handlers.openGraph,
     },
     {
@@ -172,10 +236,45 @@ export function buildCommands(
       run: handlers.toggleContextPanel,
     },
     {
+      id: 'view.outline',
+      label: 'Outline of the note',
+      category: 'View',
+      disabledReason: availability.hasActiveNote ? undefined : 'Open a note first',
+      run: handlers.toggleOutline,
+    },
+    {
+      id: 'bookmarks.panel',
+      label: 'Bookmarks',
+      category: 'Bookmarks',
+      run: handlers.toggleBookmarksPanel,
+    },
+    {
+      id: 'history.back',
+      label: 'Go back',
+      category: 'History',
+      shortcut: 'Alt+[',
+      disabledReason: availability.canGoBack ? undefined : 'There is nothing to go back to',
+      run: handlers.goBack,
+    },
+    {
+      id: 'history.forward',
+      label: 'Go forward',
+      category: 'History',
+      shortcut: 'Alt+]',
+      disabledReason: availability.canGoForward ? undefined : 'There is nothing to go forward to',
+      run: handlers.goForward,
+    },
+    {
       id: 'vault.manager',
       label: 'Vault manager',
       category: 'Vaults',
       run: handlers.openVaultManager,
+    },
+    {
+      id: 'settings.open',
+      label: 'Settings',
+      category: 'Settings',
+      run: handlers.openSettings,
     },
     {
       id: 'tab.close',
@@ -197,6 +296,13 @@ export function buildCommands(
       category: 'Tabs',
       disabledReason: availability.openTabCount > 1 ? undefined : 'Only one note is open',
       run: handlers.previousTab,
+    },
+    {
+      id: 'help.shortcuts',
+      label: 'Keyboard shortcuts',
+      category: 'Help',
+      shortcut: '?',
+      run: handlers.openShortcutHelp,
     },
   ];
 

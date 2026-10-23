@@ -4,6 +4,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { toPlainText } from '../domain/markdown';
 import { activeNotes, searchNotes } from '../domain/vault';
 import type { Vault } from '../domain/types';
+import Icon from './Icon';
 
 export interface QuickSwitcherProps {
   open: boolean;
@@ -149,6 +150,7 @@ export default function QuickSwitcher({
       }}
     >
       <h2 className="switcher__title" id={titleId}>
+        <Icon name="search" />
         Quick switcher
       </h2>
       <label className="switcher__label" htmlFor={inputId}>

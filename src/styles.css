@@ -1,26 +1,35 @@
 /* ==========================================================================
-   Lattice Notes design tokens
+   Lattice Notes — an editorial instrument
 
-   Instrument-panel minimalism: dense, calm, tool-like. One accent
-   (electric violet), charcoal base, layered graphite surfaces, warm white
-   ink. This block owns type, space, color, radius, border, and motion, and
-   always precedes component styling.
+   A writing desk, not a dashboard. The document is paper and it is read in
+   a serif; the index beside it is ink and it is read in a sans; Markdown is
+   written in a mono. Copper is the accent of the action and of the
+   selection, and it never becomes a decoration.
+
+   This block owns the primitives, the semantic tokens and the type, space,
+   radius and motion scales, and it always precedes the component styling.
 
    Contrast (WCAG 2.2 AA) against the surfaces below:
-     ink on bg 16.6:1, ink-muted on bg 8.3:1, accent on bg 6.9:1,
-     ink-faint on bg 5.5:1, on surface 5.2:1, on surface-raised 4.7:1,
-     on surface-sunken 5.8:1 (body text floor 4.5:1),
-     border-strong on surface 3.6:1 and on surface-raised 3.4:1 (UI
-     boundaries), focus ring on bg 6.9:1. --color-border is decorative
-     separation only and never carries meaning on its own.
+     ink on paper 13.4:1, ink on white 15.0:1, muted on paper 5.3:1,
+     muted on white 6.0:1, copper on paper 5.3:1, copper on white 5.8:1,
+     paper on ink 13.5:1, muted on ink 6.8:1, light copper on ink 5.4:1,
+     light copper on the raised ink 4.7:1, the strong border on paper 3.1:1
+     and on white 3.4:1 (boundaries of a field), the strong border on ink
+     3.4:1. The hairline --color-border is a separation only and never
+     carries meaning on its own.
    ========================================================================== */
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  /* Type */
-  --font-sans: 'Geist Sans', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  /* Type ---------------------------------------------------------------- */
+  /* No remote face: the system of the reader is the face of the product. */
+  --font-serif: Georgia, 'Iowan Old Style', 'Palatino Linotype', 'Times New Roman',
+    'Noto Naskh Arabic', 'Noto Serif Arabic', 'Segoe UI', Tahoma, serif;
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans Arabic',
+    'Noto Naskh Arabic', Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Noto Sans Arabic', 'Liberation Mono', monospace;
 
   --text-2xs: 0.6875rem;
   --text-xs: 0.75rem;
@@ -28,11 +37,12 @@
   --text-md: 0.9375rem;
   --text-lg: 1.125rem;
   --text-xl: 1.5rem;
-  --leading-tight: 1.25;
-  --leading-normal: 1.55;
+  --text-2xl: 2rem;
+  --leading-tight: 1.2;
+  --leading-normal: 1.6;
   --tracking-caps: 0.08em;
 
-  /* Space */
+  /* Space --------------------------------------------------------------- */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -41,23 +51,52 @@
   --space-6: 2rem;
   --space-7: 3rem;
 
-  /* Color */
-  --color-bg: #101215;
-  --color-surface: #171a1f;
-  --color-surface-raised: #1e222a;
-  --color-surface-sunken: #0b0d10;
-  --color-border: #262b33;
-  --color-border-strong: #6a7382;
-  --color-ink: #f4f1ea;
-  --color-ink-muted: #a8adb7;
-  --color-ink-faint: #848c9b;
-  --color-accent: #a78bfa;
-  --color-accent-ink: #14101f;
-  --color-focus: #a78bfa;
-  --color-danger: #f0a58f;
+  /* Primitives ---------------------------------------------------------- */
+  --paper: #f6f3ec;
+  --white: #fffdf8;
+  --ink: #242924;
+  --muted: #62665e;
+  --copper: #99512e;
+  --dark: #202923;
 
-  /* Radius: one small radius, so the surfaces stay tool-like. */
-  --radius-sm: 2px;
+  /* The derived neutrals of the two grounds. */
+  --paper-line: #ddd7c8;
+  --paper-sunken: #ece7dc;
+  --dark-raised: #2a332c;
+  --dark-lifted: #313a32;
+  --dark-sunken: #171d19;
+  --dark-line: #3c463e;
+  --dark-line-strong: #78857a;
+  --dark-muted: #b3aea3;
+  --dark-faint: #a19c90;
+  --copper-light: #d18a5e;
+  --danger: #8f3b23;
+  --danger-light: #e0937a;
+
+  /* Semantic tokens ----------------------------------------------------- */
+  /* The light surfaces: paper, white and ink. */
+  --color-bg: var(--paper);
+  --color-surface: var(--white);
+  --color-surface-raised: var(--white);
+  --color-surface-sunken: var(--paper-sunken);
+  --color-border: var(--paper-line);
+  --color-border-strong: #8f8a7c;
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--muted);
+  --color-ink-faint: #6b6e64;
+  --color-accent: var(--copper);
+  --color-accent-ink: var(--white);
+  --color-focus: var(--copper);
+  --color-danger: var(--danger);
+  --color-on-danger: var(--white);
+
+  /* The mark of the product, on its own tokens. */
+  --mark-plate: var(--ink);
+  --mark-thread-a: var(--copper-light);
+  --mark-thread-b: var(--paper);
+
+  /* Radius: one radius for every control, so the surfaces stay quiet. */
+  --radius-sm: 4px;
 
   /* Borders */
   --border-width: 1px;
@@ -75,7 +114,8 @@
   --context-rail-width: 18.75rem;
   --touch-target: 44px;
   /* The chrome of the narrow layout, above the writing area. */
-  --compact-chrome: 15rem;
+  /* The measure of the document: a line of the serif, and no more. */
+  --measure: 44rem;
 }
 
 /* ==========================================================================
@@ -130,7 +170,7 @@ a {
   width: 1px;
   height: 1px;
   padding: 0;
-  margin: -1px;
+  margin: 0;
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
@@ -163,21 +203,10 @@ a {
     min-width: 0;
   }
 
-  /* The radio is the mark, the label around it is the target. */
-  .workspace__mode {
-    min-height: var(--touch-target);
-  }
-
-  .workspace__mode input {
-    min-height: 0;
-    min-width: 0;
-  }
-
-  .graphview__mode {
-    min-height: var(--touch-target);
-  }
-
-  .graphview__mode input {
+  /* The mark of a choice is a mark: it keeps the size the platform draws it,
+     and the label around it carries the target of the finger. */
+  input[type='radio'],
+  input[type='checkbox'] {
     min-height: 0;
     min-width: 0;
   }
@@ -195,6 +224,81 @@ a {
 }
 
 /* ==========================================================================
+   The dark index
+
+   The navigation is ink. It carries its own tokens, so the ink of the index
+   never reaches the paper of the document and the paper never reaches the
+   index. The scope is the toolbar, the list of the notes, the rail of the
+   context and the fullscreen graph.
+   ========================================================================== */
+
+.workspace__toolbar,
+.workspace__explorer,
+.workspace__context,
+.graphview {
+  color-scheme: dark;
+  /* The index is ink, so the text of it is the paper. Without this, a text
+     that has no colour of its own would stay the colour of the body and
+     would be invisible on the dark surface. */
+  color: var(--color-ink);
+
+  --color-bg: var(--dark);
+  --color-surface: var(--dark-raised);
+  --color-surface-raised: var(--dark-lifted);
+  --color-surface-sunken: var(--dark-sunken);
+  --color-border: var(--dark-line);
+  --color-border-strong: var(--dark-line-strong);
+  --color-ink: var(--paper);
+  --color-ink-muted: var(--dark-muted);
+  --color-ink-faint: var(--dark-faint);
+  --color-accent: var(--copper-light);
+  --color-accent-ink: var(--dark);
+  --color-focus: var(--copper-light);
+  --color-danger: var(--danger-light);
+  --color-on-danger: var(--dark);
+
+  --mark-plate: var(--dark-raised);
+}
+
+/* The dark theme ---------------------------------------------------------- */
+
+/* The dark theme is a swap of the same tokens, so every surface keeps its
+   place and its contrast. The document becomes the ink ground and the
+   chrome goes one step deeper, so the two grounds stay apart. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --color-bg: var(--dark);
+  --color-surface: var(--dark-raised);
+  --color-surface-raised: var(--dark-lifted);
+  --color-surface-sunken: var(--dark-sunken);
+  --color-border: var(--dark-line);
+  --color-border-strong: var(--dark-line-strong);
+  --color-ink: #e8e5dc;
+  --color-ink-muted: var(--dark-muted);
+  --color-ink-faint: var(--dark-faint);
+  --color-accent: var(--copper-light);
+  --color-accent-ink: var(--dark);
+  --color-focus: var(--copper-light);
+  --color-danger: var(--danger-light);
+  --color-on-danger: var(--dark);
+
+  --mark-plate: var(--dark-lifted);
+}
+
+/* The chrome of the dark theme is a step deeper than the document, so the
+   writing still stands out from the index beside it. */
+:root[data-theme='dark'] .workspace__toolbar,
+:root[data-theme='dark'] .workspace__explorer,
+:root[data-theme='dark'] .workspace__context,
+:root[data-theme='dark'] .graphview {
+  --color-bg: var(--dark-sunken);
+  --color-surface: var(--dark);
+  --color-surface-raised: var(--dark-raised);
+  --color-surface-sunken: #101512;
+}
+
+/* ==========================================================================
    Components
    ========================================================================== */
 
@@ -203,6 +307,7 @@ a {
   place-content: center;
   min-height: 100vh;
   padding: var(--space-6);
+  background: var(--color-bg);
 }
 
 .workspace-loading__text {
@@ -232,7 +337,7 @@ a {
   grid-area: toolbar;
   display: flex;
   flex-direction: column;
-  background: var(--color-surface-sunken);
+  background: var(--color-bg);
   border-bottom: var(--border-width) solid var(--color-border);
 }
 
@@ -248,24 +353,45 @@ a {
 .workspace__brand {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   min-width: 0;
 }
 
+/* The mark of the product. It is a picture, so the name beside it carries
+   the brand. */
 .workspace__mark {
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  letter-spacing: var(--tracking-caps);
-  color: var(--color-ink-muted);
-  border: var(--border-width) solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  padding: 0 var(--space-1);
+  display: block;
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.brand-mark {
+  display: block;
+}
+
+.brand-mark__plate {
+  fill: var(--mark-plate);
+}
+
+.brand-mark__thread {
+  fill: none;
+}
+
+.brand-mark__thread--a {
+  stroke: var(--mark-thread-a);
+}
+
+.brand-mark__thread--b {
+  stroke: var(--mark-thread-b);
 }
 
 .workspace__name {
-  font-size: var(--text-sm);
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
   font-weight: 600;
-  letter-spacing: var(--tracking-caps);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.01em;
   color: var(--color-ink);
   white-space: nowrap;
 }
@@ -277,89 +403,135 @@ a {
   gap: var(--space-2);
 }
 
-.workspace__new,
-.workspace__command,
-.workspace__vault,
-.workspace__daily,
-.workspace__calendar,
-.workspace__file-action {
+/* Every tool of the chrome has the same look, so the note is the only thing
+   of the chrome that stands out. */
+.workspace__tool {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   font: inherit;
   font-size: var(--text-sm);
   line-height: 1;
   white-space: nowrap;
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-3);
   cursor: pointer;
 }
 
-.workspace__new {
-  font-weight: 600;
-  color: var(--color-accent-ink);
-  background: var(--color-accent);
+.workspace__tool:hover {
+  color: var(--color-ink);
+  border-color: var(--color-accent);
+}
+
+.workspace__tool:active {
+  background: var(--color-surface-sunken);
+}
+
+/* The menu of the app holds the commands of the whole workspace. */
+.workspace__menu {
+  position: relative;
+}
+
+.workspace__menu-summary {
+  list-style: none;
+}
+
+.workspace__menu-summary::-webkit-details-marker {
+  display: none;
+}
+
+.workspace__menu-list {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  inset-inline-end: 0;
+  z-index: 3;
+  display: grid;
+  gap: var(--space-1);
+  min-width: 15rem;
+  padding: var(--space-2);
+  background: var(--color-surface-raised);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 var(--space-3) var(--space-6) rgb(32 41 35 / 0.55);
+}
+
+/* A closed disclosure shows nothing, whatever the menu display rule says. */
+.workspace__menu:not([open]) .workspace__menu-list {
+  display: none;
+}
+
+.workspace__menu-action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  background: none;
   border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  text-align: start;
+  cursor: pointer;
 }
 
-/* The controls answer the pointer. */
-.workspace__new:hover {
-  filter: brightness(1.08);
+.workspace__menu-action:hover {
+  color: var(--color-accent);
+  background: var(--color-surface);
 }
 
-.workspace__new:active {
-  filter: brightness(0.92);
+.workspace__menu-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
 }
 
-.workspace__command:hover,
-.workspace__files-summary:hover,
+/* The shortcut of a command is a quiet hint beside its name. */
+.workspace__menu-hint,
+.sidebar__hint {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--color-ink-muted);
+  white-space: nowrap;
+}
+
 .workspace__panel-toggle:hover {
   color: var(--color-ink);
-  border-color: var(--color-ink-faint);
+  border-color: var(--color-accent);
 }
 
-.workspace__command:active,
-.workspace__files-summary:active,
 .workspace__panel-toggle:active {
   background: var(--color-surface-sunken);
 }
 
-.workspace__command {
-  color: var(--color-ink);
-  background: var(--color-surface-raised);
-  border: var(--border-width) solid var(--color-border-strong);
-}
-
-/* The daily note and the calendar of the toolbar. */
-.workspace__daily,
-.workspace__calendar {
-  color: var(--color-ink);
-  background: var(--color-surface-raised);
-  border: var(--border-width) solid var(--color-border-strong);
-}
-
-.workspace__daily:hover,
-.workspace__calendar:hover {
-  border-color: var(--color-ink-faint);
-}
-
-/* The name of the open vault opens the manager of the vaults. */
+/* The name of the open vault opens the manager of the vaults. It belongs to
+   the identity of the workspace, so it sits with the brand. */
 .workspace__vault {
   max-width: 12rem;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1;
   color: var(--color-ink-muted);
   background: none;
   border: var(--border-width) solid transparent;
+  border-inline-start-color: var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
 }
 
 .workspace__vault:hover {
   color: var(--color-ink);
-  border-color: var(--color-ink-faint);
+  border-color: var(--color-accent);
 }
 
-.workspace__files {
-  position: relative;
-}
-
-.workspace__files-summary,
 .explorer__actions-summary {
   display: inline-flex;
   align-items: center;
@@ -367,23 +539,16 @@ a {
   font-size: var(--text-sm);
   line-height: 1;
   white-space: nowrap;
-  color: var(--color-ink);
-  background: var(--color-surface-raised);
-  border: var(--border-width) solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  padding: var(--space-2) var(--space-3);
   cursor: pointer;
   list-style: none;
 }
 
-.workspace__files-summary::-webkit-details-marker,
 .explorer__actions-summary::-webkit-details-marker {
   display: none;
 }
 
 /* The marker of the disclosure, drawn instead of the platform one. */
-.workspace__files-summary::after,
-.explorer__actions-summary::after {
+.explorer__actions-summary::before {
   content: '';
   width: 0;
   height: 0;
@@ -392,38 +557,8 @@ a {
   transform: translateY(var(--space-1));
 }
 
-.workspace__files[open] .workspace__files-summary::after,
-.explorer__actions[open] .explorer__actions-summary::after {
+.explorer__actions[open] .explorer__actions-summary::before {
   transform: rotate(180deg) translateY(var(--space-1));
-}
-
-.workspace__files-menu {
-  position: absolute;
-  top: calc(100% + var(--space-2));
-  right: 0;
-  z-index: 3;
-  display: grid;
-  gap: var(--space-1);
-  min-width: 10rem;
-  padding: var(--space-2);
-  background: var(--color-surface-raised);
-  border: var(--border-width) solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 var(--space-3) var(--space-6) rgb(0 0 0 / 0.45);
-}
-
-.workspace__file-action {
-  font-size: var(--text-sm);
-  color: var(--color-ink);
-  background: none;
-  border: var(--border-width) solid transparent;
-  border-radius: var(--radius-sm);
-  text-align: left;
-}
-
-/* A closed disclosure shows nothing, whatever the menu display rule says. */
-.workspace__files:not([open]) .workspace__files-menu {
-  display: none;
 }
 
 /* The file picker lives behind the visible import control. It stays in the
@@ -444,10 +579,13 @@ a {
 }
 
 .workspace__panel-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   font: inherit;
   font-size: var(--text-sm);
   color: var(--color-ink-muted);
-  background: var(--color-surface-raised);
+  background: var(--color-surface);
   border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-3);
@@ -456,22 +594,139 @@ a {
 
 .workspace__explorer {
   grid-area: explorer;
+  /* Keep off-screen accessible labels inside this scrollport, not the page. */
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: var(--color-surface);
-  border-right: var(--border-width) solid var(--color-border);
+  background: var(--color-bg);
+  border-inline-end: var(--border-width) solid var(--color-border);
   overflow: hidden;
 }
 
-/* The name of the open vault says which vault the notes belong to. */
-.workspace__vault-label {
-  padding: var(--space-3) var(--space-4) var(--space-2);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--color-ink);
+/* The sidebar of the workspace --------------------------------------------- */
+
+/* The sidebar leads to the places of the workspace, holds what is new and
+   carries the index of the notes. */
+.sidebar__nav,
+.sidebar__create {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-3) var(--space-2);
   border-bottom: var(--border-width) solid var(--color-border);
-  overflow-wrap: anywhere;
+}
+
+.sidebar__heading {
+  margin: 0;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+}
+
+.sidebar__nav-item {
+  min-width: 0;
+}
+
+.sidebar__nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.sidebar__action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+  background: none;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  text-align: start;
+  cursor: pointer;
+}
+
+.sidebar__action:hover {
+  color: var(--color-ink);
+  background: var(--color-surface);
+}
+
+.sidebar__action-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The action that creates is the one that acts on the vault. */
+.sidebar__action--primary {
+  color: var(--color-accent);
+}
+
+.sidebar__create-actions {
+  display: grid;
+  gap: var(--space-1);
+}
+
+/* The form of a new folder says what it will do. */
+.sidebar__folder {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-surface-sunken);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.sidebar__folder-label {
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+}
+
+.sidebar__folder-input {
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  min-height: var(--touch-target);
+  min-width: 0;
+}
+
+.sidebar__folder-hint {
+  margin: 0;
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+  color: var(--color-ink-faint);
+}
+
+.sidebar__folder-error {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-danger);
+}
+
+.sidebar__folder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.sidebar__folder-actions .sidebar__action {
+  width: auto;
 }
 
 .workspace__main {
@@ -479,10 +734,51 @@ a {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
+  background: var(--color-bg);
 }
 
-/* The header of the open note: its name and the ways to show it. */
+/* The header of the open note: its name, the actions of the note and the
+   ways to show it. */
+.workspace__doc-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.workspace__doc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.workspace__doc-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+  background: none;
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.workspace__doc-action:hover {
+  color: var(--color-ink);
+  border-color: var(--color-accent);
+}
+
+.workspace__doc-action-label {
+  white-space: nowrap;
+}
+
 .workspace__doc-header {
   display: flex;
   flex-wrap: wrap;
@@ -490,30 +786,32 @@ a {
   justify-content: space-between;
   gap: var(--space-2) var(--space-4);
   padding: var(--space-4) var(--space-5);
+  background: var(--color-surface);
   border-bottom: var(--border-width) solid var(--color-border);
 }
 
 .workspace__doc-title {
   min-width: 0;
-  font-size: var(--text-xl);
+  font-family: var(--font-serif);
+  font-size: var(--text-2xl);
   font-weight: 600;
   line-height: var(--leading-tight);
+  letter-spacing: -0.015em;
   color: var(--color-ink);
   overflow-wrap: anywhere;
 }
 
+/* The view group is a row of quiet segments. The radio stays in the page and
+   keeps the keys and the name of a radio group; the label around it is the
+   segment and the target of the finger. */
 .workspace__modes {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  margin: 0;
-  padding: 0;
-  border: 0;
+  gap: var(--space-2);
   min-width: 0;
 }
 
 .workspace__modes-legend {
-  padding: 0;
   font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: var(--tracking-caps);
@@ -521,27 +819,56 @@ a {
   color: var(--color-ink-muted);
 }
 
-.workspace__mode {
+.workspace__modes-group {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+}
+
+.workspace__mode {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--touch-target);
+  padding: 0 var(--space-3);
   font-size: var(--text-sm);
   color: var(--color-ink-muted);
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
+/* The radio is not drawn: the segment around it is the mark of the choice.
+   It stays in the page, so it keeps the keys of a radio group and the name
+   the reader hears. */
 .workspace__mode input {
-  accent-color: var(--color-accent);
+  position: absolute;
+  width: 1px;
+  height: 1px;
   margin: 0;
-  font: inherit;
-  /* WCAG 2.5.8: the radio itself must clear the 24px minimum target, since
-     the header can wrap at 320px and take away the spacing exception. */
-  min-height: 1.5rem;
-  min-width: 1.5rem;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
+/* The chosen segment is marked by a ring and a heavier name, not by a colour
+   alone. */
 .workspace__mode:has(input:checked) {
   color: var(--color-ink);
+  font-weight: 600;
+  background: var(--color-surface);
+  box-shadow: inset 0 0 0 var(--border-width-thick) var(--color-accent);
+}
+
+/* The keyboard that is in the group can be seen. */
+.workspace__mode:focus-within {
+  outline: var(--border-width-thick) solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 .workspace__statusbar {
@@ -551,6 +878,7 @@ a {
   gap: var(--space-3);
   min-height: 2.25rem;
   padding: 0 var(--space-5);
+  background: var(--color-bg);
   border-bottom: var(--border-width) solid var(--color-border);
 }
 
@@ -580,7 +908,7 @@ a {
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-5);
-  background: var(--color-surface-raised);
+  background: var(--color-surface-sunken);
   border-bottom: var(--border-width) solid var(--color-border-strong);
 }
 
@@ -593,7 +921,7 @@ a {
   font: inherit;
   font-size: var(--text-xs);
   color: var(--color-ink);
-  background: var(--color-surface-sunken);
+  background: var(--color-surface);
   border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-3);
@@ -608,6 +936,15 @@ a {
   min-height: 0;
 }
 
+/* Each pane owns its scroll; reaching its end must not move the app shell. */
+.editor__textarea,
+.preview,
+.workspace__context,
+.workspace__explorer,
+.explorer__tree {
+  overscroll-behavior: contain;
+}
+
 /* One view fills the pane area on its own. */
 .workspace__panes[data-view='write'],
 .workspace__panes[data-view='read'] {
@@ -617,16 +954,27 @@ a {
 .workspace__context {
   grid-area: context;
   min-width: 0;
-  background: var(--color-surface);
-  border-left: var(--border-width) solid var(--color-border);
+  min-height: 0;
+  background: var(--color-bg);
+  border-inline-start: var(--border-width) solid var(--color-border);
   overflow: auto;
 }
 
 /* A closed panel is really closed, whatever the component display rule says. */
 .workspace__explorer[hidden],
 .workspace__context[hidden],
+.workspace__main[hidden],
 .workspace__panes[hidden] {
   display: none;
+}
+
+/* The pictures of Lucide -------------------------------------------------- */
+
+/* An icon decorates a name and never carries one, so it follows the colour
+   of the text it stands in. */
+.icon {
+  display: block;
+  flex: none;
 }
 
 /* Explorer ---------------------------------------------------------------- */
@@ -643,6 +991,7 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
   border-bottom: var(--border-width) solid var(--color-border);
 }
@@ -661,20 +1010,48 @@ a {
   color: var(--color-ink-faint);
 }
 
+.explorer__tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: var(--space-3);
+}
+
 .explorer__list {
   list-style: none;
   padding: 0;
   margin: 0;
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
+}
+
+/* A folder of the index: the notes whose name carries its path. */
+.explorer__folder {
+  border-top: var(--border-width) solid var(--color-border);
+}
+
+.explorer__folder-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  background: var(--color-surface-sunken);
+  overflow-wrap: anywhere;
+}
+
+.explorer__folder .explorer__list {
+  padding-block: var(--space-1);
 }
 
 .explorer__item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
-  border-left: var(--border-width-thick) solid transparent;
+  border-inline-start: var(--border-width-thick) solid transparent;
 }
 
 .explorer__note {
@@ -682,7 +1059,7 @@ a {
   grid-row: 1;
   min-width: 0;
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
-  text-align: left;
+  text-align: start;
   font: inherit;
   font-size: var(--text-sm);
   color: var(--color-ink-muted);
@@ -698,12 +1075,12 @@ a {
 
 .explorer__note[aria-current='true'] {
   color: var(--color-ink);
-  background: var(--color-surface-raised);
+  background: var(--color-surface);
 }
 
 /* The marker of the open note sits on the edge of the row. */
 .explorer__item:has(.explorer__note[aria-current='true']) {
-  border-left-color: var(--color-accent);
+  border-inline-start-color: var(--color-accent);
 }
 
 /* The actions of one note live behind a native disclosure, so they are
@@ -720,7 +1097,7 @@ a {
   font-size: var(--text-xs);
   color: var(--color-ink-muted);
   background: none;
-  border-color: transparent;
+  border: var(--border-width) solid transparent;
   padding: var(--space-2);
 }
 
@@ -742,6 +1119,9 @@ a {
 }
 
 .explorer__action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   font: inherit;
   font-size: var(--text-xs);
   white-space: nowrap;
@@ -769,7 +1149,7 @@ a {
 .explorer__note:active,
 .explorer__actions-summary:active,
 .explorer__action:active {
-  background: var(--color-surface-raised);
+  background: var(--color-surface);
 }
 
 .explorer__rename {
@@ -805,6 +1185,7 @@ a {
 .explorer__create {
   font: inherit;
   font-size: var(--text-sm);
+  font-weight: 600;
   color: var(--color-accent-ink);
   background: var(--color-accent);
   border: 0;
@@ -845,6 +1226,10 @@ a {
   gap: var(--space-2);
 }
 
+.search__icon {
+  color: var(--color-ink-faint);
+}
+
 .search__input {
   flex: 1;
   min-width: 0;
@@ -877,7 +1262,7 @@ a {
   align-items: flex-start;
   gap: var(--space-1);
   width: 100%;
-  text-align: left;
+  text-align: start;
   padding: var(--space-2);
   font: inherit;
   font-size: var(--text-sm);
@@ -889,8 +1274,13 @@ a {
 }
 
 .search__result:hover {
-  background: var(--color-surface-raised);
+  background: var(--color-surface);
   border-color: var(--color-border);
+}
+
+.search__result-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .search__snippet {
@@ -930,7 +1320,8 @@ a {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border-right: var(--border-width) solid var(--color-border);
+  background: var(--color-bg);
+  border-inline-end: var(--border-width) solid var(--color-border);
 }
 
 /* The inactive view stays mounted, so the hidden attribute has to be the
@@ -943,6 +1334,7 @@ a {
 .editor__label {
   padding: var(--space-4) var(--space-5) 0;
   font-size: var(--text-xs);
+  font-weight: 600;
   letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
   color: var(--color-ink-muted);
@@ -952,14 +1344,14 @@ a {
   flex: 1;
   min-height: 0;
   width: 100%;
-  padding: var(--space-3) var(--space-5) var(--space-5);
+  padding: var(--space-3) var(--space-5) var(--space-6);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  line-height: 1.7;
+  line-height: 1.75;
   color: var(--color-ink);
   background: transparent;
   border: 0;
-  resize: vertical;
+  resize: none;
 }
 
 .editor__textarea:focus-visible {
@@ -980,6 +1372,7 @@ a {
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  background: var(--color-surface);
 }
 
 .preview:focus-visible {
@@ -996,10 +1389,16 @@ a {
   border-bottom: var(--border-width) solid var(--color-border);
 }
 
+/* The document itself: a page of a book, with a measure and a margin. */
 .preview__body {
-  padding: var(--space-4) var(--space-5) var(--space-6);
-  font-size: var(--text-md);
+  width: 100%;
+  max-width: var(--measure);
+  margin-inline: auto;
+  padding: var(--space-6) var(--space-5) var(--space-7);
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
   line-height: var(--leading-normal);
+  color: var(--color-ink);
   overflow-wrap: anywhere;
 }
 
@@ -1014,17 +1413,19 @@ a {
 
 /* The headings of the note follow the type scale of the app. */
 .preview__body h2 {
+  font-size: var(--text-xl);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.01em;
+  margin-top: var(--space-6);
+}
+
+.preview__body h3 {
   font-size: var(--text-lg);
   line-height: var(--leading-tight);
 }
 
-.preview__body h3 {
-  font-size: var(--text-md);
-  line-height: var(--leading-tight);
-}
-
 .preview__body h4 {
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
 }
 
 .preview__body h5,
@@ -1035,7 +1436,7 @@ a {
 
 .preview__body ul,
 .preview__body ol {
-  padding-left: var(--space-5);
+  padding-inline-start: var(--space-5);
 }
 
 .preview__body li + li {
@@ -1043,9 +1444,10 @@ a {
 }
 
 .preview__body blockquote {
-  padding-left: var(--space-3);
+  padding-inline-start: var(--space-4);
   color: var(--color-ink-muted);
-  border-left: var(--border-width-thick) solid var(--color-border-strong);
+  border-inline-start: var(--border-width-thick) solid var(--color-accent);
+  font-style: italic;
 }
 
 .preview__body code {
@@ -1056,6 +1458,7 @@ a {
 .preview__code {
   padding: var(--space-3);
   overflow-x: auto;
+  font-family: var(--font-mono);
   background: var(--color-surface-sunken);
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -1083,16 +1486,19 @@ a {
   max-width: calc(100vw - 2rem);
   padding: 0;
   color: var(--color-ink);
-  background: var(--color-surface-raised);
+  background: var(--color-surface);
   border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-sm);
 }
 
 .palette::backdrop {
-  background: rgb(0 0 0 / 0.5);
+  background: rgb(36 41 36 / 0.45);
 }
 
 .palette__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
   font-size: var(--text-xs);
   font-weight: 600;
@@ -1130,23 +1536,27 @@ a {
   gap: var(--space-3);
   min-height: var(--touch-target);
   padding: var(--space-2) var(--space-3);
-  border-left: var(--border-width-thick) solid transparent;
+  border-inline-start: var(--border-width-thick) solid transparent;
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
 .palette__option[aria-selected='true'] {
-  background: var(--color-surface-sunken);
-  border-left-color: var(--color-accent);
+  background: var(--color-bg);
+  border-inline-start-color: var(--color-accent);
 }
 
 .palette__option-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
   font-size: var(--text-sm);
 }
 
 /* The group a command belongs to. */
 .palette__option-category {
-  margin-right: var(--space-2);
+  margin-inline-end: var(--space-2);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-caps);
@@ -1194,16 +1604,19 @@ a {
   max-width: calc(100vw - 2rem);
   padding: 0;
   color: var(--color-ink);
-  background: var(--color-surface-raised);
+  background: var(--color-surface);
   border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-sm);
 }
 
 .switcher::backdrop {
-  background: rgb(0 0 0 / 0.5);
+  background: rgb(36 41 36 / 0.45);
 }
 
 .switcher__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
   font-size: var(--text-xs);
   font-weight: 600;
@@ -1250,14 +1663,14 @@ a {
   gap: var(--space-1);
   min-height: var(--touch-target);
   padding: var(--space-2) var(--space-3);
-  border-left: var(--border-width-thick) solid transparent;
+  border-inline-start: var(--border-width-thick) solid transparent;
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
 .switcher__option[aria-selected='true'] {
   background: var(--color-surface-sunken);
-  border-left-color: var(--color-accent);
+  border-inline-start-color: var(--color-accent);
 }
 
 .switcher__option-name {
@@ -1269,6 +1682,13 @@ a {
   font-size: var(--text-xs);
   color: var(--color-ink-muted);
   overflow-wrap: anywhere;
+}
+
+/* The note of the line that says how many more notes match. */
+.switcher__more {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--color-ink-faint);
 }
 
 .switcher__empty {
@@ -1286,6 +1706,7 @@ a {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
+  background: var(--color-bg);
   border-bottom: var(--border-width) solid var(--color-border);
 }
 
@@ -1316,10 +1737,19 @@ a {
 
 .tabs__label[aria-current='true'] {
   color: var(--color-ink);
-  background: var(--color-surface-raised);
+  background: var(--color-bg);
+}
+
+/* The open tab carries a copper rule on its edge. */
+.tabs__tab:has(.tabs__label[aria-current='true']) {
+  background: var(--color-bg);
+  box-shadow: inset 0 var(--border-width-thick) var(--color-accent);
 }
 
 .tabs__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: var(--touch-target);
   min-height: var(--touch-target);
   padding: 0;
@@ -1329,7 +1759,7 @@ a {
   color: var(--color-ink-faint);
   background: none;
   border: 0;
-  border-left: var(--border-width) solid var(--color-border);
+  border-inline-start: var(--border-width) solid var(--color-border);
   cursor: pointer;
 }
 
@@ -1356,7 +1786,7 @@ a {
   font: inherit;
   font-size: var(--text-sm);
   color: var(--color-ink);
-  background: var(--color-surface-sunken);
+  background: var(--color-surface);
   border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -1382,11 +1812,10 @@ a {
 
 .context__title {
   margin-bottom: var(--space-3);
-  font-size: var(--text-xs);
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
   font-weight: 600;
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-  color: var(--color-ink-muted);
+  color: var(--color-ink);
 }
 
 .context__meta {
@@ -1427,12 +1856,50 @@ a {
 }
 
 .context__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
   margin-bottom: var(--space-2);
   font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
   color: var(--color-ink-muted);
+}
+
+/* The heading of the graph and the control that opens it full screen. */
+.context__heading-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.context__heading-row .context__heading {
+  margin-bottom: 0;
+}
+
+.context__graph-open {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 1.5rem;
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.context__graph-open:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
 }
 
 .context__list {
@@ -1445,7 +1912,7 @@ a {
 
 .context__item {
   width: 100%;
-  text-align: left;
+  text-align: start;
   padding: var(--space-2);
   font: inherit;
   font-size: var(--text-sm);
@@ -1459,12 +1926,176 @@ a {
 
 .context__item:hover {
   color: var(--color-ink);
-  background: var(--color-surface-raised);
+  background: var(--color-surface);
   border-color: var(--color-border);
 }
 
 .context__create {
   color: var(--color-accent);
+}
+
+/* The links that leave the note carry a rule on the margin, so the reader
+   sees at once that they are the words of the note and not the mentions of
+   it. */
+.context__links {
+  padding-inline-start: var(--space-3);
+  border-inline-start: var(--border-width) solid var(--color-border);
+}
+
+/* The outline and the bookmarks ------------------------------------------- */
+
+/* The outline of the note and the bookmarks of the vault live in the rail of
+   the context. They are flat lists on the ink of the index, like the rest of
+   the rail. */
+.outline,
+.bookmarks {
+  padding: var(--space-4);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.outline__title,
+.bookmarks__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.outline__list,
+.bookmarks__list,
+.bookmarks__groups {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+/* A heading of a deeper level sits further in, so the shape of the note is
+   visible in the list. */
+.outline__item[data-level='2'] {
+  padding-inline-start: var(--space-2);
+}
+
+.outline__item[data-level='3'] {
+  padding-inline-start: var(--space-3);
+}
+
+.outline__item[data-level='4'] {
+  padding-inline-start: var(--space-4);
+}
+
+.outline__item[data-level='5'],
+.outline__item[data-level='6'] {
+  padding-inline-start: var(--space-5);
+}
+
+.outline__link,
+.bookmarks__open {
+  width: 100%;
+  text-align: start;
+  padding: var(--space-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+  background: none;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.outline__link:hover,
+.bookmarks__open:hover {
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+
+.outline__empty,
+.bookmarks__empty {
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
+
+/* The bookmarks ----------------------------------------------------------- */
+
+.bookmarks__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.bookmarks__add {
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.bookmarks__add:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.bookmarks__add:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.bookmarks__group + .bookmarks__group {
+  margin-top: var(--space-3);
+}
+
+.bookmarks__group-name {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.bookmarks__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.bookmarks__open {
+  flex: 1;
+  min-width: 0;
+}
+
+.bookmarks__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  color: var(--color-ink-faint);
+  background: none;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.bookmarks__remove:hover {
+  color: var(--color-danger);
+  border-color: var(--color-border);
 }
 
 /* Local graph ------------------------------------------------------------- */
@@ -1571,7 +2202,7 @@ a {
   width: 100%;
   min-height: var(--touch-target);
   padding: var(--space-2);
-  text-align: left;
+  text-align: start;
   font: inherit;
   font-size: var(--text-sm);
   color: var(--color-ink-muted);
@@ -1583,7 +2214,7 @@ a {
 
 .graph__item:hover {
   color: var(--color-ink);
-  background: var(--color-surface-raised);
+  background: var(--color-surface);
   border-color: var(--color-border);
 }
 
@@ -1608,38 +2239,86 @@ a {
 
 .onboarding {
   display: grid;
-  place-items: start center;
+  place-items: safe center;
   min-height: 100vh;
   min-height: 100dvh;
   padding: var(--space-6) var(--space-4);
   overflow-y: auto;
+  background: var(--color-bg);
 }
 
 .onboarding__panel {
   width: min(34rem, 100%);
-  padding: var(--space-6);
   background: var(--color-surface);
-  border: var(--border-width) solid var(--color-border);
+  border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-sm);
 }
 
+/* The welcome is the first part: the mark, the name and the promise. */
+.onboarding__welcome {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-6) var(--space-5);
+}
+
+.onboarding__mark {
+  flex: none;
+  width: 3rem;
+  height: 3rem;
+}
+
+.onboarding__eyebrow {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
 .onboarding__title {
-  font-size: var(--text-xl);
+  margin-top: var(--space-1);
+  font-family: var(--font-serif);
+  font-size: var(--text-2xl);
   font-weight: 600;
   line-height: var(--leading-tight);
+  letter-spacing: -0.015em;
   color: var(--color-ink);
 }
 
+.onboarding__promise {
+  margin-top: var(--space-2);
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
+  font-style: italic;
+  color: var(--color-accent);
+}
+
 .onboarding__intro {
-  margin-top: var(--space-3);
+  padding: 0 var(--space-6) var(--space-5);
   color: var(--color-ink-muted);
   font-size: var(--text-sm);
+}
+
+/* The setup is the second part: a named form with its own ground. */
+.onboarding__setup {
+  padding: var(--space-5) var(--space-6) var(--space-6);
+  background: var(--color-bg);
+  border-top: var(--border-width) solid var(--color-border);
+}
+
+.onboarding__setup-title {
+  margin-bottom: var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
 }
 
 .onboarding__form {
   display: grid;
   gap: var(--space-3);
-  margin-top: var(--space-5);
 }
 
 .onboarding__label {
@@ -1657,7 +2336,7 @@ a {
   font: inherit;
   font-size: var(--text-sm);
   color: var(--color-ink);
-  background: var(--color-surface-sunken);
+  background: var(--color-surface);
   border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-sm);
 }
@@ -1669,6 +2348,7 @@ a {
   padding: var(--space-3);
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-sm);
+  background: var(--color-surface);
 }
 
 .onboarding__legend {
@@ -1692,6 +2372,9 @@ a {
 
 .onboarding__choice input {
   accent-color: var(--color-accent);
+  /* The mark keeps the size of a mark; the label around it is the target. */
+  width: 1.15rem;
+  height: 1.15rem;
   margin: 0;
   font: inherit;
 }
@@ -1737,14 +2420,14 @@ a {
   max-height: calc(100dvh - 2rem);
   padding: 0;
   color: var(--color-ink);
-  background: var(--color-surface-raised);
+  background: var(--color-surface);
   border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   overflow-y: auto;
 }
 
 .vaults::backdrop {
-  background: rgb(0 0 0 / 0.5);
+  background: rgb(36 41 36 / 0.45);
 }
 
 .vaults__title {
@@ -1796,7 +2479,8 @@ a {
 
 .vaults__name {
   min-width: 0;
-  font-size: var(--text-sm);
+  font-family: var(--font-serif);
+  font-size: var(--text-md);
   color: var(--color-ink);
   overflow-wrap: anywhere;
 }
@@ -1820,14 +2504,22 @@ a {
 }
 
 .vaults__action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   font: inherit;
   font-size: var(--text-xs);
   color: var(--color-ink);
-  background: var(--color-surface-sunken);
+  background: var(--color-surface);
   border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-3);
   cursor: pointer;
+}
+
+.vaults__action:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
 }
 
 .vaults__action[aria-disabled='true'] {
@@ -1852,7 +2544,7 @@ a {
   font: inherit;
   font-size: var(--text-sm);
   color: var(--color-ink);
-  background: var(--color-surface-sunken);
+  background: var(--color-surface);
   border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-sm);
 }
@@ -1871,7 +2563,7 @@ a {
   font: inherit;
   font-size: var(--text-sm);
   color: var(--color-ink);
-  background: var(--color-surface-sunken);
+  background: var(--color-surface);
   border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-4);
@@ -1885,13 +2577,32 @@ a {
   max-width: calc(100vw - 1rem);
   padding: 0;
   color: var(--color-ink);
-  background: var(--color-surface-raised);
+  background: var(--color-surface);
   border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-sm);
 }
 
 .calendar::backdrop {
-  background: rgb(0 0 0 / 0.5);
+  background: rgb(36 41 36 / 0.45);
+}
+
+/* On a narrow screen the calendar takes the whole width of the screen, so
+   the seven days of a week fit in it and every day keeps its 44 pixel
+   target. The panel never grows wider than the screen. */
+.calendar--compact {
+  width: 100%;
+  max-width: 100vw;
+  border-inline: 0;
+  border-radius: 0;
+}
+
+.calendar--compact .calendar__panel {
+  padding: var(--space-2) var(--space-1);
+}
+
+.calendar--compact .calendar__grid {
+  min-width: 0;
+  table-layout: fixed;
 }
 
 .calendar__panel {
@@ -1908,12 +2619,16 @@ a {
 }
 
 .calendar__month {
-  font-size: var(--text-md);
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
   font-weight: 600;
   text-align: center;
 }
 
 .calendar__nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: var(--touch-target);
   min-height: var(--touch-target);
   font-size: var(--text-lg);
@@ -1926,7 +2641,8 @@ a {
 }
 
 .calendar__nav:hover {
-  border-color: var(--color-ink-faint);
+  color: var(--color-accent);
+  border-color: var(--color-accent);
 }
 
 .calendar__jump {
@@ -1945,7 +2661,7 @@ a {
   font: inherit;
   font-size: var(--text-sm);
   color: var(--color-ink);
-  background: var(--color-surface-sunken);
+  background: var(--color-surface);
   border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   padding: var(--space-2);
@@ -1996,7 +2712,7 @@ a {
 }
 
 .calendar__day:hover {
-  background: var(--color-surface);
+  background: var(--color-surface-sunken);
 }
 
 /* The day of today. */
@@ -2033,6 +2749,9 @@ a {
 }
 
 .calendar__today {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   font: inherit;
   font-size: var(--text-sm);
   color: var(--color-ink);
@@ -2042,6 +2761,331 @@ a {
   padding: var(--space-2) var(--space-3);
   min-height: var(--touch-target);
   cursor: pointer;
+}
+
+/* Settings, recovery and confirmation -------------------------------------- */
+
+/* The three dialogs of the wave share one shell: a title on the hairline,
+   the body of the dialog, and the actions on the foot of it. */
+.settings,
+.recovery,
+.confirm {
+  width: min(34rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  padding: 0;
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.settings::backdrop,
+.recovery::backdrop,
+.confirm::backdrop {
+  background: rgb(36 41 36 / 0.45);
+}
+
+.settings__title,
+.recovery__title,
+.confirm__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.settings__form {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.settings__field,
+.confirm__field {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.settings__label,
+.confirm__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+/* A label that carries a choice is the target of that choice. */
+.settings__label:has(input[type='checkbox']) {
+  min-height: var(--touch-target);
+}
+
+.settings__label input[type='checkbox'] {
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0;
+  accent-color: var(--color-accent);
+}
+
+.settings__hint,
+.confirm__hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+}
+
+.settings__number,
+.settings__select,
+.confirm__input {
+  min-height: var(--touch-target);
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  background: var(--color-bg);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.settings__number {
+  width: 8rem;
+}
+
+.settings__actions,
+.recovery__actions,
+.confirm__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--border-width) solid var(--color-border);
+}
+
+/* The base of every action of the product: the same type, the same rule and
+   the same radius, so a restore, a retry and a cancel read as one family. */
+.settings__action,
+.recovery__action,
+.recovery__restore,
+.bookmarks__retry,
+.confirm__action {
+  min-height: var(--touch-target);
+  padding: var(--space-2) var(--space-4);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  background: transparent;
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+/* A quiet action says that it can be used. The actions that carry a colour
+   of their own keep it in every state, the way the other accent actions of
+   the product do. */
+.settings__action:not(.settings__action--primary):hover,
+.recovery__action:hover,
+.bookmarks__retry:hover,
+.confirm__action:not(.confirm__action--danger):hover {
+  border-color: var(--color-accent);
+}
+
+.settings__action:not(.settings__action--primary):active,
+.recovery__action:active,
+.bookmarks__retry:active,
+.confirm__action:not(.confirm__action--danger):active {
+  background: var(--color-surface-sunken);
+}
+
+/* The action that acts is the accent of the product and the destructive one
+   is the danger of it: both keep their colour in every state, the way the
+   other accent actions of the product do. */
+.settings__action--primary,
+.recovery__restore {
+  color: var(--color-accent-ink);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.confirm__action--danger {
+  color: var(--color-on-danger);
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.settings__action[disabled],
+.recovery__action[disabled],
+.recovery__restore[disabled],
+.bookmarks__retry[disabled],
+.confirm__action[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* A destructive action that is not open yet is a quiet control, not a
+   washed out one: the colour of the danger would say more than it may. */
+.confirm__action--danger[disabled] {
+  color: var(--color-ink-faint);
+  background: transparent;
+  border-color: var(--color-border-strong);
+  opacity: 1;
+}
+
+.recovery__note,
+.confirm__text {
+  padding: var(--space-3) var(--space-4) 0;
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.recovery__empty {
+  padding: var(--space-4);
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+
+.recovery__list {
+  list-style: none;
+  padding: var(--space-3) var(--space-4);
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.recovery__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.recovery__facts {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.recovery__time {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-ink);
+}
+
+.recovery__change {
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+}
+
+.confirm__field {
+  padding: var(--space-3) var(--space-4) 0;
+}
+
+/* The list of the shortcuts ------------------------------------------------ */
+
+.shortcuts {
+  width: min(28rem, calc(100vw - 1rem));
+  max-width: calc(100vw - 1rem);
+  padding: 0;
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.shortcuts::backdrop {
+  background: rgb(36 41 36 / 0.45);
+}
+
+.shortcuts__panel {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.shortcuts__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.shortcuts__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.shortcuts__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
+  color: var(--color-ink-muted);
+  background: none;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.shortcuts__close:hover {
+  color: var(--color-ink);
+  border-color: var(--color-border-strong);
+}
+
+.shortcuts__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.shortcuts__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-sm);
+}
+
+.shortcuts__label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.shortcuts__keys {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+  white-space: nowrap;
+}
+
+.shortcuts__note {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-ink-muted);
 }
 
 /* Fullscreen graph -------------------------------------------------------- */
@@ -2093,11 +3137,16 @@ a {
 }
 
 .graphview__title {
-  font-size: var(--text-lg);
+  font-family: var(--font-serif);
+  font-size: var(--text-xl);
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .graphview__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: var(--touch-target);
   min-height: var(--touch-target);
   font-size: var(--text-xl);
@@ -2109,6 +3158,11 @@ a {
   cursor: pointer;
 }
 
+.graphview__close:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
 .graphview__toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -2117,6 +3171,9 @@ a {
 }
 
 .graphview__control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   min-width: var(--touch-target);
   min-height: var(--touch-target);
   padding: var(--space-2) var(--space-3);
@@ -2130,7 +3187,8 @@ a {
 }
 
 .graphview__control:hover {
-  border-color: var(--color-ink-faint);
+  color: var(--color-accent);
+  border-color: var(--color-accent);
 }
 
 .graphview__control[disabled] {
@@ -2144,7 +3202,8 @@ a {
   gap: var(--space-3);
   margin: 0;
   padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
-  border: var(--border-width) solid var(--color-border-strong);
+  border: 0;
+  background: var(--color-surface-sunken);
   border-radius: var(--radius-sm);
 }
 
@@ -2165,6 +3224,12 @@ a {
   font-size: var(--text-sm);
   color: var(--color-ink);
   cursor: pointer;
+}
+
+.graphview__mode input {
+  accent-color: var(--color-accent);
+  margin: 0;
+  font: inherit;
 }
 
 .graphview__body {
@@ -2212,9 +3277,11 @@ a {
   fill: var(--color-ink);
 }
 
+/* The size of a label is set on the label itself, because it follows the
+   scale of the picture. */
 .graphview__label {
   fill: var(--color-ink-muted);
-  font-size: 12px;
+  font-family: var(--font-sans);
   text-anchor: middle;
   pointer-events: none;
 }
@@ -2269,7 +3336,7 @@ a {
   padding: var(--space-2);
   font: inherit;
   font-size: var(--text-sm);
-  text-align: left;
+  text-align: start;
   color: var(--color-ink);
   background: none;
   border: var(--border-width) solid transparent;
@@ -2306,8 +3373,10 @@ a {
 }
 
 .graphview__detail-name {
-  font-size: var(--text-sm);
+  font-family: var(--font-serif);
+  font-size: var(--text-md);
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .graphview__open {
@@ -2315,6 +3384,7 @@ a {
   padding: var(--space-2) var(--space-3);
   font: inherit;
   font-size: var(--text-sm);
+  font-weight: 600;
   color: var(--color-accent-ink);
   background: var(--color-accent);
   border: var(--border-width) solid var(--color-accent);
@@ -2327,18 +3397,49 @@ a {
 @media (max-width: 48rem) {
   .workspace {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto auto auto;
+    grid-template-rows: auto minmax(0, 1fr);
     grid-template-areas:
       'toolbar'
-      'explorer'
-      'main'
-      'context';
-    height: auto;
-    min-height: 100dvh;
+      'content';
   }
 
+  /* The chrome of a narrow screen is two rows: the identity of the
+     workspace with the panel toggles, and the menu of the app. */
   .workspace__toolbar-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'brand panels'
+      'actions actions';
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
     padding: var(--space-2) var(--space-3);
+  }
+
+  .workspace__brand {
+    grid-area: brand;
+  }
+
+  .workspace__actions {
+    grid-area: actions;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: end;
+    gap: var(--space-1);
+  }
+
+  .workspace__menu-summary {
+    width: auto;
+    justify-content: center;
+  }
+
+  /* The menu of the app opens on the screen, not under the chrome. */
+  .workspace__menu-list {
+    inset-inline-end: 0;
+  }
+
+  .context__graph-open {
+    min-height: var(--touch-target);
   }
 
   /* The mark is decoration, the name carries the brand. */
@@ -2347,32 +3448,51 @@ a {
   }
 
   .workspace__name {
-    font-size: var(--text-xs);
+    font-size: var(--text-md);
   }
 
-  /* The toolbar keeps the name and the actions on one line. */
-  .workspace__new,
-  .workspace__command,
-  .workspace__daily,
-  .workspace__calendar,
-  .workspace__files-summary {
+  .workspace__vault {
     font-size: var(--text-xs);
-    padding: var(--space-2);
+    max-width: 8rem;
+  }
+
+  /* The tools of the chrome keep their 44 pixel targets, so they are
+     smaller but never smaller than a finger. */
+  .workspace__tool {
+    font-size: var(--text-xs);
+    padding: var(--space-1);
+    min-height: var(--touch-target);
+  }
+
+  /* The actions of the sidebar keep their place beside their names. */
+  .sidebar__action {
+    font-size: var(--text-sm);
+  }
+
+  .workspace__doc-action {
+    font-size: var(--text-xs);
   }
 
   .workspace__panels {
+    grid-area: panels;
     display: flex;
-    gap: var(--space-2);
-    padding: 0 var(--space-3) var(--space-2);
+    gap: var(--space-1);
+    padding: 0;
+  }
+
+  .workspace__panel-toggle {
+    padding: var(--space-1);
   }
 
   .workspace__main {
-    overflow: visible;
+    grid-area: content;
   }
 
   .workspace__explorer {
-    overflow: visible;
-    border-right: 0;
+    grid-area: content;
+    min-height: 0;
+    overflow: auto;
+    border-inline-end: 0;
     border-top: var(--border-width) solid var(--color-border);
   }
 
@@ -2380,26 +3500,35 @@ a {
     flex: none;
   }
 
-  .explorer__list {
+  .explorer__tree {
     flex: none;
     overflow: visible;
   }
 
   .workspace__context {
-    border-left: 0;
+    grid-area: content;
+    border-inline-start: 0;
     border-top: var(--border-width) solid var(--color-border);
   }
 
   .workspace__panes {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
 
+  .workspace__panes[data-view='split'] {
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  /* The header of the note on a phone carries the name, the actions of the
+     note and the views. It is written close to the paper, so the writing
+     starts higher on the screen. */
   .workspace__doc-header {
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-2) var(--space-4);
   }
 
   .workspace__doc-title {
-    font-size: var(--text-lg);
+    font-size: var(--text-xl);
   }
 
   .workspace__statusbar {
@@ -2420,18 +3549,8 @@ a {
   }
 
   .editor {
-    border-right: 0;
+    border-inline-end: 0;
     border-bottom: var(--border-width) solid var(--color-border);
-  }
-
-  /* The writing area takes the height of the screen instead of a short
-     field with the preview stacked under it. */
-  .editor__textarea {
-    min-height: calc(100dvh - var(--compact-chrome));
-  }
-
-  .preview {
-    min-height: calc(100dvh - var(--compact-chrome));
   }
 
   /* The picture is above the list on a narrow screen. The panel scrolls
@@ -2451,11 +3570,44 @@ a {
     max-height: none;
     overflow: visible;
   }
+}
 
-  .workspace__graph {
-    font-size: var(--text-xs);
-    padding: var(--space-2);
+/* The writing direction of the reader -------------------------------------- */
+
+/* At landscape/keyboard heights, scroll the document chrome rather than
+   shrinking the writing area out of reach. The app shell stays bounded. */
+@media (max-height: 32rem) {
+  .workspace__main,
+  .workspace__explorer {
+    overflow-y: auto;
   }
+
+  .workspace__main > :not(.workspace__panes) {
+    flex-shrink: 0;
+  }
+
+  .workspace__panes {
+    flex: 1 0 20rem;
+  }
+
+  .explorer {
+    flex: none;
+  }
+
+  .explorer__tree {
+    flex: none;
+    overflow: visible;
+  }
+}
+
+/* The marks of the interface follow the direction of the writing. */
+[dir='rtl'] .calendar__nav .icon {
+  transform: scaleX(-1);
+}
+
+[dir='rtl'] .workspace__menu-list {
+  inset-inline-end: auto;
+  inset-inline-start: 0;
 }
 
 /* Less movement wanted: the panel is there, it just does not move. */

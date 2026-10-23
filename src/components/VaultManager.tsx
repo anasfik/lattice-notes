@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 
 import type { VaultCatalog, VaultMetadata } from '../storage/vaultRepository';
+import Icon from './Icon';
 
 export interface VaultManagerProps {
   open: boolean;
@@ -163,6 +164,7 @@ export default function VaultManager({
                         onOpen(member.id);
                       }}
                     >
+                      <Icon name="open-vault" size={14} />
                       Open
                     </button>
                     <button
@@ -171,6 +173,7 @@ export default function VaultManager({
                       aria-label={`Rename ${member.name}`}
                       onClick={() => startRename(member)}
                     >
+                      <Icon name="rename" size={14} />
                       Rename
                     </button>
                     {archived ? (
@@ -180,6 +183,7 @@ export default function VaultManager({
                         aria-label={`Restore ${member.name}`}
                         onClick={() => onRestore(member.id)}
                       >
+                        <Icon name="restore" size={14} />
                         Restore
                       </button>
                     ) : (
@@ -193,6 +197,7 @@ export default function VaultManager({
                           onArchive(member.id);
                         }}
                       >
+                        <Icon name="archive" size={14} />
                         Archive
                       </button>
                     )}
@@ -245,6 +250,7 @@ export default function VaultManager({
               setRenamingId(null);
             }}
           >
+            <Icon name="add" size={14} />
             New vault
           </button>
         )}

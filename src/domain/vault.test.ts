@@ -9,6 +9,7 @@ import {
   deleteNote,
   normalizeNoteName,
   noteNameIndex,
+  purgeNote,
   renameNote,
   restoreNote,
   searchNotes,
@@ -273,6 +274,39 @@ describe('deleteNote and restoreNote', () => {
     expect(deleteNote(created.vault, 'missing').note).toBeNull();
     expect(deleteNote(deleted.vault, created.note.id).note).toBeNull();
     expect(restoreNote(created.vault, created.note.id).note).toBeNull();
+  });
+});
+
+describe('purgeNote', () => {
+  it('removes the note from the vault for good', () => {
+    const created = createNote(createEmptyVault(), 'Alpha', '# Alpha');
+
+    const purged = purgeNote(created.vault, created.note.id);
+
+    expect(purged.note?.id).toBe(created.note.id);
+    expect(purged.vault.notes).toHaveLength(0);
+    expect(activeNotes(purged.vault)).toHaveLength(0);
+    expect(purged.vault.activeNoteId).toBeNull();
+  });
+
+  it('keeps the other notes and moves the selection', () => {
+    const first = createNote(createEmptyVault(), 'Alpha');
+    const second = createNote(first.vault, 'Beta');
+    const open = { ...second.vault, activeNoteId: second.note.id };
+
+    const purged = purgeNote(open, second.note.id);
+
+    expect(purged.vault.notes.map((note) => note.name)).toEqual(['Alpha']);
+    expect(purged.vault.activeNoteId).toBe(first.note.id);
+  });
+
+  it('reports an unknown id without touching the vault', () => {
+    const vault = vaultWith('Alpha');
+
+    const purged = purgeNote(vault, 'missing');
+
+    expect(purged.note).toBeNull();
+    expect(purged.vault).toBe(vault);
   });
 });
 

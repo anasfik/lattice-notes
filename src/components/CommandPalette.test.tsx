@@ -34,9 +34,17 @@ const RUN: string[] = [];
 /** A small catalog with one command that cannot run. */
 function commands(): CommandAction[] {
   return buildCommands(
-    { hasActiveNote: false, canUndo: false, openTabCount: 0, contextPanelToggleable: true },
+    {
+      hasActiveNote: false,
+      canUndo: false,
+      openTabCount: 0,
+      contextPanelToggleable: true,
+      canGoBack: false,
+      canGoForward: false,
+    },
     {
       createNote: () => RUN.push('createNote'),
+      createFolder: () => RUN.push('createFolder'),
       renameNote: () => RUN.push('renameNote'),
       trashNote: () => RUN.push('trashNote'),
       undo: () => RUN.push('undo'),
@@ -44,6 +52,8 @@ function commands(): CommandAction[] {
       exportVault: () => RUN.push('exportVault'),
       setViewMode: (mode) => RUN.push(`setViewMode:${mode}`),
       openSwitcher: () => RUN.push('openSwitcher'),
+      openPalette: () => RUN.push('openPalette'),
+      openShortcutHelp: () => RUN.push('openShortcutHelp'),
       focusSearch: () => RUN.push('focusSearch'),
       openVaultManager: () => RUN.push('openVaultManager'),
       toggleContextPanel: () => RUN.push('toggleContextPanel'),
@@ -53,6 +63,14 @@ function commands(): CommandAction[] {
       openDailyNote: () => RUN.push('openDailyNote'),
       openCalendar: () => RUN.push('openCalendar'),
       openGraph: () => RUN.push('openGraph'),
+      openSettings: () => RUN.push('openSettings'),
+      openRecovery: () => RUN.push('openRecovery'),
+      deletePermanent: () => RUN.push('deletePermanent'),
+      goBack: () => RUN.push('goBack'),
+      goForward: () => RUN.push('goForward'),
+      toggleBookmark: () => RUN.push('toggleBookmark'),
+      toggleOutline: () => RUN.push('toggleOutline'),
+      toggleBookmarksPanel: () => RUN.push('toggleBookmarksPanel'),
     },
   );
 }

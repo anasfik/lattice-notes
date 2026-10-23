@@ -12,12 +12,18 @@ import type { Vault } from './domain/types';
 import {
   createSeedVault,
   createStoredVault,
+  loadBookmarks,
   loadCatalog,
+  loadSettings,
   loadVault,
   loadVaultSession,
   openStoredVault,
+  saveSettings,
   saveVault,
+  listSnapshots,
+  writeSnapshot,
 } from './storage/vaultRepository';
+import { DEFAULT_SETTINGS } from './domain/settings';
 import type { VaultTabSession } from './storage/vaultRepository';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -40,6 +46,19 @@ const storage = vi.hoisted(() => ({
   readDelays: new Map<string, number>(),
   /** The reads of a tab list that fail, per vault id. */
   sessionFailures: new Map<string, number>(),
+  /** Snapshot writes that wait, per note id, so a switch can overtake one. */
+  snapshotDelays: new Map<string, number>(),
+  /** Saving that fails because the storage refused more bytes, per vault. */
+  quotaFailures: new Map<string, number>(),
+  /** The writes of a snapshot that fail, per note id. */
+  snapshotFailures: new Map<string, number>(),
+  /** The writes of the settings that fail. */
+  settingsFailures: new Map<string, number>(),
+  /** The reads of a history that fail, per note id. */
+  listFailures: new Map<string, number>(),
+  /** The reads of the bookmarks that wait, per vault id. */
+  bookmarkDelays: new Map<string, number>(),
+  bookmarkReadFailures: new Map<string, number>(),
 }));
 
 vi.mock('./storage/vaultRepository', async (importOriginal) => {
@@ -53,6 +72,15 @@ vi.mock('./storage/vaultRepository', async (importOriginal) => {
       const queue = storage.delays.get(key);
       const wait = queue && queue.length > 0 ? (queue.shift() as number) : 0;
       if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      const quotaFailures = storage.quotaFailures.get(key) ?? 0;
+      if (quotaFailures > 0) {
+        storage.quotaFailures.set(key, quotaFailures - 1);
+        record.failed = true;
+        record.done = true;
+        const quadruple = new Error('the local storage refused more bytes');
+        quadruple.name = 'QuotaExceededError';
+        throw quadruple;
+      }
       const failures = storage.failures.get(key) ?? 0;
       if (failures > 0) {
         storage.failures.set(key, failures - 1);
@@ -81,6 +109,48 @@ vi.mock('./storage/vaultRepository', async (importOriginal) => {
       }
       return actual.loadVaultSession(id);
     },
+    writeSnapshot: async (vaultId: string, noteId: string, body: string) => {
+      const wait = storage.snapshotDelays.get(noteId) ?? 0;
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      const failures = storage.snapshotFailures.get(noteId) ?? 0;
+      if (failures > 0) {
+        storage.snapshotFailures.set(noteId, failures - 1);
+        throw new Error('the history could not be written');
+      }
+      return actual.writeSnapshot(vaultId, noteId, body);
+    },
+    saveSettings: async (settings: Parameters<typeof actual.saveSettings>[0]) => {
+      const failures = storage.settingsFailures.get('settings') ?? 0;
+      if (failures > 0) {
+        storage.settingsFailures.set('settings', failures - 1);
+        throw new Error('the settings could not be written');
+      }
+      return actual.saveSettings(settings);
+    },
+    listSnapshots: async (vaultId: string, noteId: string) => {
+      const failures = storage.listFailures.get(noteId) ?? 0;
+      if (failures > 0) {
+        storage.listFailures.set(noteId, failures - 1);
+        throw new Error('the stored history could not be read');
+      }
+      return actual.listSnapshots(vaultId, noteId);
+    },
+    loadBookmarks: async (vaultId: string) => {
+      const failures = storage.bookmarkReadFailures.get(vaultId) ?? 0;
+      if (failures > 0) {
+        storage.bookmarkReadFailures.set(vaultId, failures - 1);
+        throw new Error('the bookmarks could not be read');
+      }
+      const wait = storage.bookmarkDelays.get(vaultId) ?? 0;
+      if (wait > 0) {
+        // A read that started before a change hands over the list it saw, so
+        // the app can tell that it is out of date.
+        const stale = await actual.loadBookmarks(vaultId);
+        await new Promise((resolve) => setTimeout(resolve, wait));
+        return stale;
+      }
+      return actual.loadBookmarks(vaultId);
+    },
   };
 });
 
@@ -104,7 +174,12 @@ if (typeof dialogProto.showModal !== 'function') {
 
 const DB_NAME = 'lattice-notes';
 const STORE_NAME = 'vault';
+const SETTINGS_STORE = 'settings';
+const SNAPSHOT_STORE = 'snapshots';
+const BOOKMARK_STORE = 'bookmarks';
 const DOCUMENT_KEY = 'current';
+/** The version of the database the product writes today. */
+const DB_VERSION = 3;
 /** The width jsdom starts with; the compact layout starts below 768. */
 const INITIAL_WIDTH = window.innerWidth;
 
@@ -123,7 +198,7 @@ async function deleteDatabase(): Promise<void> {
 /** Raises the database version and drops the store, so later writes fail. */
 async function dropStore(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 2);
+    const request = indexedDB.open(DB_NAME, DB_VERSION + 1);
     request.onupgradeneeded = () => {
       if (request.result.objectStoreNames.contains('vault')) {
         request.result.deleteObjectStore('vault');
@@ -141,11 +216,13 @@ async function dropStore(): Promise<void> {
 async function restoreStore(): Promise<void> {
   await deleteDatabase();
   await new Promise<void>((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains('vault')) {
-        request.result.createObjectStore('vault');
-      }
+      const store = request.result;
+      if (!store.objectStoreNames.contains(STORE_NAME)) store.createObjectStore(STORE_NAME);
+      if (!store.objectStoreNames.contains(SETTINGS_STORE)) store.createObjectStore(SETTINGS_STORE);
+      if (!store.objectStoreNames.contains(SNAPSHOT_STORE)) store.createObjectStore(SNAPSHOT_STORE);
+      if (!store.objectStoreNames.contains(BOOKMARK_STORE)) store.createObjectStore(BOOKMARK_STORE);
     };
     request.onsuccess = () => {
       request.result.close();
@@ -155,10 +232,29 @@ async function restoreStore(): Promise<void> {
   });
 }
 
+/** Writes a raw bookmark record, including a broken one. */
+async function writeRawBookmark(key: string, value: unknown): Promise<void> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('raw open failed'));
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(BOOKMARK_STORE, 'readwrite');
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('raw write failed'));
+      transaction.objectStore(BOOKMARK_STORE).put(value, key);
+    });
+  } finally {
+    db.close();
+  }
+}
+
 /** Reads the stored document without the repository's version check. */
 async function readRawDocument(): Promise<{ version: number; vault: Vault }> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error('raw open failed'));
   });
@@ -186,7 +282,7 @@ async function writeRawCatalog(catalog: unknown): Promise<void> {
 /** Writes one raw record into the store of the app. */
 async function writeRaw(key: string, value: unknown): Promise<void> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE_NAME)) {
         request.result.createObjectStore(STORE_NAME);
@@ -465,6 +561,21 @@ async function openVaultManager(): Promise<void> {
   await waitFor(() => container.querySelector('dialog.vaults')?.hasAttribute('open') === true);
 }
 
+/** The menu of the app, the layer of the global commands. */
+function appMenu(): HTMLDetailsElement {
+  const found = container.querySelector<HTMLDetailsElement>('details.workspace__menu');
+  if (!found) throw new Error('no app menu');
+  return found;
+}
+
+/** Opens the menu of the app, so its commands are on the screen. */
+async function openAppMenu(): Promise<HTMLDetailsElement> {
+  const menu = appMenu();
+  await click(menu.querySelector('summary') as Element);
+  expect(menu.open).toBe(true);
+  return menu;
+}
+
 /** Opens the command palette with the shortcut under test. */
 async function openPalette(): Promise<void> {
   await act(async () => {
@@ -500,6 +611,14 @@ beforeEach(async () => {
   storage.failures.clear();
   storage.readFailures.clear();
   storage.readDelays.clear();
+  storage.sessionFailures.clear();
+  storage.snapshotDelays.clear();
+  storage.quotaFailures.clear();
+  storage.snapshotFailures.clear();
+  storage.settingsFailures.clear();
+  storage.listFailures.clear();
+  storage.bookmarkDelays.clear();
+  storage.bookmarkReadFailures.clear();
   await deleteDatabase();
 });
 
@@ -944,16 +1063,13 @@ describe('import and export', () => {
 
     expect(alertText()).toContain('Local storage');
 
-    // The export control lives in the files disclosure, so the disclosure
-    // has to be open before the control is on the screen.
-    const files = container.querySelector<HTMLDetailsElement>('details.workspace__files');
-    if (!files) throw new Error('no files disclosure');
-    await click(files.querySelector('summary') as Element);
-    expect(files.open).toBe(true);
+    // The export control lives in the menu of the app, so the menu has to be
+    // open before the control is on the screen.
+    const menu = await openAppMenu();
 
     const exportButton = buttonByName('Export vault');
     expect(exportButton).not.toBeNull();
-    expect(files.contains(exportButton)).toBe(true);
+    expect(menu.contains(exportButton)).toBe(true);
   });
 
   it('clears the import alert when a later import succeeds', async () => {
@@ -1090,6 +1206,43 @@ describe('import and export', () => {
 });
 
 describe('compact panels', () => {
+  it('reveals and focuses a first note created from the document empty state', async () => {
+    await saveVault(createEmptyVault());
+    window.innerWidth = 390;
+    await renderLegacyApp();
+    await click(container.querySelector('.workspace__empty-note-action') as Element);
+    expect(container.querySelector('.workspace__main')?.hasAttribute('hidden')).toBe(false);
+    expect(document.activeElement).toBe(editorTextarea());
+  });
+
+  it('shows one supporting panel without unmounting the draft', async () => {
+    window.innerWidth = 390;
+    await renderLegacyApp();
+    const editor = editorTextarea();
+    await fill(editor, 'draft kept while navigating');
+    const toggles = queryAll<HTMLButtonElement>('.workspace__panel-toggle');
+    await click(toggles[0] as Element);
+    expect(container.querySelector('.workspace__main')?.hasAttribute('hidden')).toBe(true);
+    await click(toggles[1] as Element);
+    expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(true);
+    expect(container.querySelector('.workspace__context')?.hasAttribute('hidden')).toBe(false);
+    expect(editorTextarea()).toBe(editor);
+    await click(toggles[1] as Element);
+    expect(container.querySelector('.workspace__main')?.hasAttribute('hidden')).toBe(false);
+    expect(editor.value).toBe('draft kept while navigating');
+    expect(container.querySelectorAll('main')).toHaveLength(1);
+  });
+
+  it('returns to the document after choosing an index note', async () => {
+    window.innerWidth = 390;
+    await renderLegacyApp();
+    await click(queryAll<HTMLButtonElement>('.workspace__panel-toggle')[0] as Element);
+    await click(queryAll<HTMLButtonElement>('.explorer__note').find((row) => row.textContent?.includes('Getting started')) as Element);
+    expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(true);
+    expect(container.querySelector('.workspace__main')?.hasAttribute('hidden')).toBe(false);
+    expect(noteTitle()).toBe('Getting started');
+  });
+
   it('turns the notes and the context into panels on a narrow screen', async () => {
     window.innerWidth = 390;
     await renderLegacyApp();
@@ -1233,14 +1386,13 @@ describe('compact panels', () => {
     await click(toggles[0] as Element);
     await click(toggles[1] as Element);
 
-    const row = container.querySelector<HTMLButtonElement>('.explorer__note');
-    if (!row) throw new Error('no note row');
-    row.focus();
-    await pressKey(row, 'Escape');
+    const panel = container.querySelector<HTMLElement>('.workspace__context');
+    if (!panel) throw new Error('no context panel');
+    await pressKey(panel, 'Escape');
 
     expect(toggles[0]?.getAttribute('aria-expanded')).toBe('false');
-    expect(toggles[1]?.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(toggles[0]);
+    expect(toggles[1]?.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(toggles[1]);
   });
 });
 
@@ -1502,8 +1654,8 @@ describe('unreadable storage', () => {
     expect(await loadVault('current')).toBeNull();
     expect((await loadCatalog())?.activeVaultId).toBe(id);
     // The name of the vault and the manager are back without a reload.
-    await waitFor(() => container.querySelector('.workspace__vault-label') !== null);
-    expect(container.querySelector('.workspace__vault-label')?.textContent).toBe('Work');
+    await waitFor(() => buttonByName('Vaults: Work') !== null);
+    expect(buttonByName('Vaults: Work')).not.toBeNull();
   });
 
   it('keeps saving after a retry replaces the unreadable vault', async () => {
@@ -1608,15 +1760,15 @@ describe('command palette', () => {
 
   it('returns focus to the trigger when it closes', async () => {
     await renderLegacyApp();
-    const trigger = buttonByName('Commands');
-    trigger.focus();
+    const menu = await openAppMenu();
+    const summary = menu.querySelector('summary') as HTMLElement;
 
-    await click(trigger);
+    await click(buttonByName('Command palette'));
     expect(paletteDialog().hasAttribute('open')).toBe(true);
 
     await pressKey(paletteInput(), 'Escape');
 
-    expect(document.activeElement).toBe(trigger);
+    expect(document.activeElement).toBe(summary);
   });
 
   it('runs the New note command', async () => {
@@ -1890,12 +2042,6 @@ describe('linked notes', () => {
 });
 
 describe('toolbar and views', () => {
-  function filesDisclosure(): HTMLDetailsElement {
-    const found = container.querySelector<HTMLDetailsElement>('details.workspace__files');
-    if (!found) throw new Error('no files disclosure');
-    return found;
-  }
-
   function noteDisclosure(index = 0): HTMLDetailsElement {
     const found = container.querySelectorAll<HTMLDetailsElement>('details.explorer__actions')[index];
     if (!found) throw new Error('no note disclosure');
@@ -1910,45 +2056,52 @@ describe('toolbar and views', () => {
     return found;
   }
 
-  it('shows the product name and the primary actions in the toolbar', async () => {
+  it('shows the product name and the global commands in the chrome', async () => {
     await renderLegacyApp();
 
     const toolbar = container.querySelector('.workspace__toolbar');
     expect(toolbar).not.toBeNull();
     expect(toolbar?.querySelector('h1')?.textContent).toBe('Lattice Notes');
-    expect(buttonByName('New note')).not.toBeNull();
-    expect(buttonByName('Commands')).not.toBeNull();
-    expect(filesDisclosure().querySelector('summary')?.textContent).toBe('Files');
+    // The menu of the app holds the commands of the whole workspace.
+    expect(appMenu().querySelector('summary')?.textContent).toContain('Menu');
+    expect(buttonByName('Command palette')).not.toBeNull();
     expect(buttonByName('Import Markdown')).not.toBeNull();
     expect(buttonByName('Export vault')).not.toBeNull();
+    expect(buttonByName('Keyboard shortcuts')).not.toBeNull();
   });
 
-  it('opens the files disclosure and closes it with Escape', async () => {
+  it('carries the mark of the product in the chrome', async () => {
     await renderLegacyApp();
-    const files = filesDisclosure();
-    const summary = files.querySelector('summary') as HTMLElement;
+
+    const mark = container.querySelector('svg.workspace__mark');
+    expect(mark).not.toBeNull();
+    // The mark is a picture, so the name of the product carries the brand.
+    expect(mark?.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('opens the menu of the app and closes it with Escape', async () => {
+    await renderLegacyApp();
+    const menu = appMenu();
+    const summary = menu.querySelector('summary') as HTMLElement;
 
     summary.focus();
     await click(summary);
-    expect(files.open).toBe(true);
+    expect(menu.open).toBe(true);
 
     await pressKey(summary, 'Escape');
 
-    expect(files.open).toBe(false);
+    expect(menu.open).toBe(false);
     expect(document.activeElement).toBe(summary);
   });
 
-  it('closes the files disclosure after an action and gives the keyboard back to the summary', async () => {
+  it('closes the menu of the app after an action and gives the keyboard back to the summary', async () => {
     await renderLegacyApp();
-    const files = filesDisclosure();
-    const summary = files.querySelector('summary') as HTMLElement;
-    await click(summary);
-    expect(files.open).toBe(true);
+    const menu = await openAppMenu();
 
     await click(buttonByName('Import Markdown'));
 
-    expect(files.open).toBe(false);
-    expect(document.activeElement).toBe(summary);
+    expect(menu.open).toBe(false);
+    expect(document.activeElement).toBe(menu.querySelector('summary'));
   });
 
   it('puts the rename and delete actions behind a per-note disclosure', async () => {
@@ -2160,7 +2313,8 @@ describe('toolbar and views', () => {
     await renderLegacyApp();
     expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(true);
 
-    await click(buttonByName('Commands'));
+    await openAppMenu();
+    await click(buttonByName('Command palette'));
 
     expect(paletteDialog().hasAttribute('open')).toBe(true);
   });
@@ -2448,8 +2602,9 @@ describe('vault manager', () => {
 
     await waitFor(() => statusText().includes('Renamed'));
     expect(buttonByName('Vaults: Renamed vault')).not.toBeNull();
-    // The explorer says which vault the notes belong to.
-    expect(container.querySelector('.workspace__vault-label')?.textContent).toBe('Renamed vault');
+    // The name of the vault belongs to the chrome of the workspace, so the
+    // index of the notes does not repeat it.
+    expect(container.querySelector('.workspace__vault-label')).toBeNull();
   });
 });
 
@@ -2624,14 +2779,15 @@ describe('quick switcher', () => {
 
   it('closes with Escape and gives the keyboard back', async () => {
     await renderLegacyApp();
-    const trigger = buttonByName('Commands');
-    trigger.focus();
+    const menu = await openAppMenu();
+    const summary = menu.querySelector('summary') as HTMLElement;
+    summary.focus();
 
     await openSwitcher();
     await pressKey(switcherInput(), 'Escape');
 
     expect(switcherDialog().hasAttribute('open')).toBe(false);
-    expect(document.activeElement).toBe(trigger);
+    expect(document.activeElement).toBe(summary);
   });
 
   it('does nothing while another modal is open', async () => {
@@ -3066,5 +3222,979 @@ describe('the fullscreen graph', () => {
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
       document.documentElement.clientWidth,
     );
+  });
+});
+
+describe('the rename command of the note', () => {
+  it('opens compact notes for rename only once across breakpoint changes', async () => {
+    await act(async () => {
+      window.innerWidth = 390;
+      window.dispatchEvent(new Event('resize'));
+    });
+    await renderLegacyApp();
+    await runCommand('Rename note');
+    const input = container.querySelector<HTMLInputElement>('.explorer__rename-input');
+    expect(input).not.toBeNull();
+    expect(document.activeElement).toBe(input);
+    expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(false);
+    await pressKey(input!, 'Escape');
+    await click(buttonByName('Index'));
+    for (const width of [1280, 390]) {
+      await act(async () => {
+        window.innerWidth = width;
+        window.dispatchEvent(new Event('resize'));
+      });
+    }
+    expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('reopens rename after cancellation and saving with the current name', async () => {
+    await renderLegacyApp();
+    for (const name of [null, 'A renamed note', null]) {
+      await runCommand('Rename note');
+      const input = container.querySelector<HTMLInputElement>('.explorer__rename-input');
+      expect(input).not.toBeNull();
+      expect(document.activeElement).toBe(input);
+      expect(input?.value).toBe(noteTitle());
+      if (name) await fill(input!, name);
+      await pressKey(input!, name ? 'Enter' : 'Escape');
+    }
+    expect(noteTitle()).toBe('A renamed note');
+  });
+
+  it('renames the note of the screen in the list of the notes, not in a platform prompt', async () => {
+    await renderLegacyApp();
+    const prompt = vi.spyOn(window, 'prompt');
+
+    await runCommand('Rename note');
+
+    const input = container.querySelector<HTMLInputElement>('.explorer__rename-input');
+    expect(input).not.toBeNull();
+    expect(input?.value).toBe('Welcome to Lattice Notes');
+    expect(document.activeElement).toBe(input);
+    expect(prompt).not.toHaveBeenCalled();
+
+    prompt.mockRestore();
+  });
+
+  it('keeps the body of the note when the rename of the command is committed', async () => {
+    await renderLegacyApp();
+    const body = editorTextarea().value;
+
+    await runCommand('Rename note');
+    const input = container.querySelector<HTMLInputElement>('.explorer__rename-input');
+    if (!input) throw new Error('no rename input');
+    await fill(input, 'Renamed by the command');
+    await pressKey(input, 'Enter');
+
+    expect(noteTitle()).toBe('Renamed by the command');
+    expect(editorTextarea().value).toBe(body);
+    expect(statusText()).toContain('Renamed');
+  });
+
+  it('leaves the note alone when the rename of the command is cancelled', async () => {
+    await renderLegacyApp();
+    const body = editorTextarea().value;
+
+    await runCommand('Rename note');
+    const input = container.querySelector<HTMLInputElement>('.explorer__rename-input');
+    if (!input) throw new Error('no rename input');
+    await pressKey(input, 'Escape');
+
+    expect(container.querySelector('.explorer__rename-input')).toBeNull();
+    expect(noteTitle()).toBe('Welcome to Lattice Notes');
+    expect(editorTextarea().value).toBe(body);
+    expect(document.activeElement?.textContent).toBe('Welcome to Lattice Notes');
+  });
+});
+
+describe('the layers of the workspace', () => {
+  it('keeps the global commands in the menu of the app', async () => {
+    await renderLegacyApp();
+
+    const menu = appMenu();
+    const commands = Array.from(menu.querySelectorAll('button')).map(
+      (button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '',
+    );
+
+    expect(commands).toEqual(
+      expect.arrayContaining([
+        'Command palette',
+        'Vault manager',
+        'Import Markdown',
+        'Export vault',
+        'Keyboard shortcuts',
+      ]),
+    );
+  });
+
+  it('keeps the navigation and the creation in the sidebar', async () => {
+    await renderLegacyApp();
+
+    const sidebar = container.querySelector('.workspace__explorer');
+    expect(sidebar).not.toBeNull();
+    expect(sidebar?.querySelector('nav.sidebar__nav')).not.toBeNull();
+    expect(sidebar?.querySelector('section.sidebar__create')).not.toBeNull();
+    // The navigation of the sidebar and the creation are two layers of their
+    // own, and neither of them belongs to the header of the note.
+    expect(buttonByName('New note')).not.toBeNull();
+    expect(buttonByName('New folder')).not.toBeNull();
+    expect(buttonByName('Search workspace')).not.toBeNull();
+  });
+
+  it('keeps the actions of the note in the header of the note', async () => {
+    await renderLegacyApp();
+
+    const header = container.querySelector('.workspace__doc-header');
+    expect(header).not.toBeNull();
+    expect(header?.querySelector('.workspace__doc-actions')).not.toBeNull();
+    expect(header?.querySelector('.workspace__modes')).not.toBeNull();
+    expect(buttonByName('Rename note')).not.toBeNull();
+    expect(buttonByName('Move note to trash')).not.toBeNull();
+  });
+
+  it('keeps the panel toggles with the brand of the toolbar', async () => {
+    await renderLegacyApp();
+
+    expect(container.querySelector('.workspace__toolbar-row .workspace__panels')).not.toBeNull();
+    expect(container.querySelector('.workspace__toolbar-row .workspace__vault')).not.toBeNull();
+  });
+});
+
+describe('the folders of the index', () => {
+  it('opens the compact index and focuses the folder form from Commands', async () => {
+    window.innerWidth = 390;
+    await renderLegacyApp();
+    expect(container.querySelector<HTMLElement>('.workspace__explorer')!.hidden).toBe(true);
+    await runCommand('New folder');
+    expect(container.querySelector<HTMLElement>('.workspace__explorer')!.hidden).toBe(false);
+    expect(document.activeElement).toBe(folderField());
+  });
+
+  it('returns focus to New folder when the compact form is cancelled', async () => {
+    window.innerWidth = 390;
+    await renderLegacyApp();
+    await click(buttonByName('Index'));
+    const opener = buttonByName('New folder');
+    await openFolderForm();
+    const cancel = container.querySelector<HTMLButtonElement>('.sidebar__folder-actions button[type="button"]')!;
+    cancel.focus();
+    await click(cancel);
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('focuses the editor after creating a folder without an active note', async () => {
+    window.innerWidth = 390;
+    await saveVault(createEmptyVault());
+    await renderLegacyApp();
+    await click(buttonByName('Index'));
+    await openFolderForm();
+    await fill(folderField(), 'Projects');
+    await submitFolderForm();
+    expect(noteTitle()).toBe('Projects/Untitled');
+    expect(document.activeElement).toBe(editorTextarea());
+  });
+
+  /** The field of the form of a new folder. */
+  function folderField(): HTMLInputElement {
+    const found = container.querySelector<HTMLInputElement>('.sidebar__folder-input');
+    if (!found) throw new Error('no folder field');
+    return found;
+  }
+
+  /** The full names of the notes of the index, with the path of their folder. */
+  function fullNoteNames(): string[] {
+    return queryAll<HTMLButtonElement>('.explorer__note').map(
+      (button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '',
+    );
+  }
+
+  /** Opens the form of a new folder. */
+  async function openFolderForm(): Promise<void> {
+    await click(buttonByName('New folder'));
+    await waitFor(() => folderField() !== null);
+  }
+
+  /**
+   * Sends the form of a new folder.
+   *
+   * The browser sends the form when the reader presses Enter in the field;
+   * jsdom does not do that on its own, so the event is sent here.
+   */
+  async function submitFolderForm(): Promise<void> {
+    const form = container.querySelector('form.sidebar__folder');
+    if (!form) throw new Error('no folder form');
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+  }
+
+  it('creates the first note of the folder with the path in its name', async () => {
+    await renderLegacyApp();
+
+    await openFolderForm();
+    expect(document.activeElement).toBe(folderField());
+    // The form says what it will do, so the reader is never surprised.
+    expect(container.querySelector('.sidebar__folder-hint')?.textContent).toContain(
+      'Projects/Untitled',
+    );
+
+    await fill(folderField(), 'Projects');
+    await submitFolderForm();
+
+    expect(fullNoteNames()).toContain('Projects/Untitled');
+    expect(noteTitle()).toBe('Projects/Untitled');
+    expect(statusText()).toContain('Projects');
+  });
+
+  it('refuses a path with an empty part and says why', async () => {
+    await renderLegacyApp();
+    const before = fullNoteNames();
+
+    await openFolderForm();
+    await fill(folderField(), 'Projects/');
+    await submitFolderForm();
+
+    expect(fullNoteNames()).toEqual(before);
+    expect(container.querySelector('.sidebar__folder-error')?.textContent).toContain('empty');
+    expect(statusText()).toContain('empty');
+  });
+
+  it('refuses an empty name and says why', async () => {
+    await renderLegacyApp();
+    const before = fullNoteNames();
+
+    await openFolderForm();
+    await fill(folderField(), '  ');
+    await submitFolderForm();
+
+    expect(fullNoteNames()).toEqual(before);
+    expect(container.querySelector('.sidebar__folder-error')?.textContent).toContain('name');
+  });
+
+  it('creates the same folder twice without losing the first note', async () => {
+    await renderLegacyApp();
+
+    await openFolderForm();
+    await fill(folderField(), 'Projects');
+    await submitFolderForm();
+
+    await openFolderForm();
+    await fill(folderField(), 'Projects');
+    await submitFolderForm();
+
+    expect(fullNoteNames()).toContain('Projects/Untitled');
+    expect(fullNoteNames()).toContain('Projects/Untitled 2');
+  });
+
+  it('groups the notes of a path in the index', async () => {
+    const first = createNote(createEmptyVault(), 'Alpha');
+    const second = createNote(first.vault, 'Projects/One');
+    await saveVault({ ...second.vault, activeNoteId: first.note.id });
+    await renderLegacyApp();
+
+    const folders = queryAll('.explorer__folder-name').map(
+      (element) => element.textContent?.trim() ?? '',
+    );
+    expect(folders.join(' ')).toContain('Projects');
+    // The note of the folder shows its own title, and its name keeps the path.
+    expect(noteNames()).toContain('One');
+    expect(fullNoteNames()).toContain('Projects/One');
+    expect(noteNames()).toContain('Alpha');
+  });
+
+  it('keeps the body of a note when it is moved into a folder', async () => {
+    await renderLegacyApp();
+    const body = editorTextarea().value;
+
+    await click(buttonByName('Rename Welcome to Lattice Notes'));
+    const input = container.querySelector<HTMLInputElement>('.explorer__rename-input');
+    if (!input) throw new Error('no rename input');
+    await fill(input, 'Projects/Moved');
+    await pressKey(input, 'Enter');
+
+    expect(fullNoteNames()).toContain('Projects/Moved');
+    expect(editorTextarea().value).toBe(body);
+  });
+
+  it('keeps the path of a folder through an export', async () => {
+    await renderLegacyApp();
+
+    await openFolderForm();
+    await fill(folderField(), 'Projects');
+    await submitFolderForm();
+
+    const blobs: Blob[] = [];
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: (blob: Blob) => {
+        blobs.push(blob);
+        return 'blob:lattice-notes/vault';
+      },
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: () => {} });
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {});
+
+    try {
+      await openAppMenu();
+      await click(buttonByName('Export vault'));
+
+      expect(blobs).toHaveLength(1);
+      const envelope = JSON.parse(await (blobs[0] as Blob).text()) as {
+        notes: { name: string }[];
+      };
+      expect(envelope.notes.map((note) => note.name)).toContain('Projects/Untitled');
+    } finally {
+      anchorClick.mockRestore();
+      Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: originalCreate });
+      Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevoke });
+    }
+  });
+});
+
+describe('the shortcuts of the app', () => {
+  /** Sends a key to the app, the way the keyboard of the reader does. */
+  async function press(
+    key: string,
+    init: KeyboardEventInit = {},
+    target: EventTarget = window,
+  ): Promise<void> {
+    await act(async () => {
+      target.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }),
+      );
+    });
+  }
+
+  it('renames the note of the screen with F2', async () => {
+    await renderLegacyApp();
+
+    await press('F2');
+
+    const input = container.querySelector<HTMLInputElement>('.explorer__rename-input');
+    expect(input).not.toBeNull();
+    expect(document.activeElement).toBe(input);
+  });
+
+  it('opens the daily note of today with Alt+T', async () => {
+    await renderLegacyApp();
+
+    await press('t', { altKey: true });
+
+    expect(noteTitle()).toBe(formatLocalDate(new Date()));
+  });
+
+  it('opens the calendar with Alt+C', async () => {
+    await renderLegacyApp();
+
+    await press('c', { altKey: true });
+
+    expect(container.querySelector('dialog.calendar')?.hasAttribute('open')).toBe(true);
+  });
+
+  it('opens the graph with Alt+G', async () => {
+    await renderLegacyApp();
+
+    await press('g', { altKey: true });
+
+    expect(container.querySelector('dialog.graphview')?.hasAttribute('open')).toBe(true);
+  });
+
+  it('opens the list of the shortcuts with the question mark', async () => {
+    await renderLegacyApp();
+
+    await press('?');
+
+    const help = container.querySelector('dialog.shortcuts');
+    expect(help?.hasAttribute('open')).toBe(true);
+    expect(help?.textContent).toContain('F2');
+    expect(help?.textContent).toContain('Ctrl/Cmd+K');
+  });
+
+  it('does not run a shortcut while a panel of the app is open', async () => {
+    await renderLegacyApp();
+
+    await openPalette();
+    await press('c', { altKey: true });
+    await press('F2');
+
+    expect(container.querySelector('dialog.calendar')?.hasAttribute('open')).toBe(false);
+    expect(container.querySelector('.explorer__rename-input')).toBeNull();
+    expect(paletteDialog().hasAttribute('open')).toBe(true);
+  });
+
+  it('runs the shortcut of a layer while the reader is writing', async () => {
+    await renderLegacyApp();
+    const editor = editorTextarea();
+    editor.focus();
+
+    // The key of a layer does not write a character, so it works there too.
+    await press('c', { altKey: true }, editor);
+
+    expect(container.querySelector('dialog.calendar')?.hasAttribute('open')).toBe(true);
+  });
+
+  it('does not take the question mark away from the reader', async () => {
+    await renderLegacyApp();
+    const editor = editorTextarea();
+    editor.focus();
+
+    await press('?', {}, editor);
+
+    expect(container.querySelector('dialog.shortcuts')?.hasAttribute('open')).toBe(false);
+    expect(document.activeElement).toBe(editor);
+  });
+
+  it('does not run a shortcut while the keyboard writes a composition', async () => {
+    await renderLegacyApp();
+
+    await press('c', { altKey: true, isComposing: true });
+    await press('F2', { isComposing: true });
+
+    expect(container.querySelector('dialog.calendar')?.hasAttribute('open')).toBe(false);
+    expect(container.querySelector('.explorer__rename-input')).toBeNull();
+  });
+
+  it('keeps the shortcuts of the browser', async () => {
+    await renderLegacyApp();
+    const before = noteNames().length;
+
+    await press('w', { ctrlKey: true });
+    await press('Tab', { ctrlKey: true });
+
+    expect(noteNames()).toHaveLength(before);
+  });
+});
+
+describe('the settings, the recovery and the permanent delete', () => {
+  /** The button of the dialog with the given label. */
+  function dialogButton(dialog: string, label: string): HTMLButtonElement {
+    const found = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(`dialog.${dialog} button`),
+    ).find((button) => (button.textContent ?? '').trim() === label);
+    if (!found) throw new Error(`no button named "${label}" in the ${dialog} dialog`);
+    return found;
+  }
+
+  it('restores an earlier body of a note from its history', async () => {
+    const created = createNote(createEmptyVault(), 'Roadmap', 'the first body');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+    await renderLegacyApp();
+
+    await fill(editorTextarea(), 'the second body');
+    await waitFor(async () => (await loadVault())?.notes[0]?.body === 'the second body');
+
+    await click(buttonByName('Recover note'));
+    await waitFor(() => container.querySelector('dialog.recovery[open]') !== null);
+    await waitFor(() => container.querySelectorAll('.recovery__item').length === 1);
+
+    await click(container.querySelector<HTMLButtonElement>('.recovery__restore') as Element);
+
+    await waitFor(() => editorTextarea().value === 'the first body');
+    // The restored body is the one that is stored.
+    await waitFor(async () => (await loadVault())?.notes[0]?.body === 'the first body');
+  });
+
+  it('keeps the body on the screen when a note is restored', async () => {
+    const created = createNote(createEmptyVault(), 'Roadmap', 'the first body');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+    await renderLegacyApp();
+
+    await fill(editorTextarea(), 'the second body');
+    await waitFor(async () => (await loadVault())?.notes[0]?.body === 'the second body');
+    await click(buttonByName('Recover note'));
+    await waitFor(() => container.querySelectorAll('.recovery__item').length === 1);
+    await click(container.querySelector<HTMLButtonElement>('.recovery__restore') as Element);
+    await waitFor(() => editorTextarea().value === 'the first body');
+
+    // The body that was on the screen is kept, so the restore can be undone.
+    await click(buttonByName('Recover note'));
+    await waitFor(() => container.querySelectorAll('.recovery__item').length === 2);
+    const changes = Array.from(container.querySelectorAll('.recovery__change')).map(
+      (element) => element.textContent ?? '',
+    );
+    // The body that is on the screen is one of them, and it changes nothing.
+    expect(changes.some((change) => change.includes('0 lines added, 0 lines removed'))).toBe(true);
+    // The body that was on the screen is the other one.
+    expect(changes.some((change) => change.includes('1 line added, 1 line removed'))).toBe(true);
+  });
+
+  it('says when a note has no history yet', async () => {
+    const created = createNote(createEmptyVault(), 'Roadmap', 'a body');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+    await renderLegacyApp();
+
+    await click(buttonByName('Recover note'));
+    await waitFor(() => container.querySelector('dialog.recovery[open]') !== null);
+    await waitFor(() =>
+      (container.querySelector('.recovery__empty')?.textContent ?? '').includes('No snapshot'),
+    );
+
+    expect(container.querySelector('.recovery__empty')?.textContent).toContain('No snapshot');
+  });
+
+  it('stores the settings and follows them in the editor', async () => {
+    await renderLegacyApp();
+
+    await click(buttonByName('Settings'));
+    await waitFor(() => container.querySelector('dialog.settings[open]') !== null);
+    const boxes = container.querySelectorAll<HTMLInputElement>('dialog.settings input[type="checkbox"]');
+    await act(async () => {
+      (boxes[1] as HTMLInputElement).click();
+    });
+    await click(dialogButton('settings', 'Save settings'));
+
+    await waitFor(async () => (await loadSettings())?.spellcheck === false);
+    expect(editorTextarea().getAttribute('spellcheck')).toBe('false');
+  });
+
+  it('asks before a note is trashed when the setting says so', async () => {
+    await saveSettings({ ...DEFAULT_SETTINGS, confirmDelete: true });
+    const created = createNote(createEmptyVault(), 'Roadmap', 'a body');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+    await renderLegacyApp();
+
+    await click(buttonByName('Move note to trash'));
+    await waitFor(() => container.querySelector('dialog.confirm[open]') !== null);
+    // The note is still there while the question is open.
+    expect(noteNames()).toContain('Roadmap');
+
+    await click(dialogButton('confirm', 'Move to trash'));
+
+    await waitFor(() => !noteNames().includes('Roadmap'));
+  });
+
+  it('keeps the note when the history cannot be written', async () => {
+    const created = createNote(createEmptyVault(), 'Roadmap', 'the first body');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+    storage.snapshotFailures.set(created.note.id, 1);
+    await renderLegacyApp();
+
+    await fill(editorTextarea(), 'the second body');
+
+    // The note is stored, even though its history could not be written.
+    await waitFor(async () => (await loadVault())?.notes[0]?.body === 'the second body');
+    expect(statusText()).toContain('history');
+  });
+
+  it('does not write a restore into a vault that takes the screen later', async () => {
+    await renderLegacyApp();
+    const second = await storeSecondVault();
+
+    await fill(editorTextarea(), 'body of A');
+    await waitFor(async () => (await loadVault('current'))?.notes[0]?.body === 'body of A');
+
+    await click(buttonByName('Recover note'));
+    await waitFor(() => container.querySelector('dialog.recovery[open]') !== null);
+    await waitFor(() => container.querySelectorAll('.recovery__item').length === 1);
+
+    // The restore waits, and during that wait another vault takes the screen.
+    const noteA = (await loadVault('current'))?.notes.find((note) => note.body === 'body of A');
+    storage.snapshotDelays.set(noteA?.id ?? '', 300);
+    await click(container.querySelector<HTMLButtonElement>('.recovery__restore') as Element);
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+    await waitFor(async () => noteTitle() === 'Only in B');
+    await sleep(400);
+
+    // The second vault shows its own note and keeps its own body.
+    expect(editorTextarea().value).toBe('body of B');
+    // The vault of the note is not rewritten either.
+    const storedFirst = await loadVault('current');
+    expect(storedFirst?.notes.find((note) => note.id === noteA?.id)?.body).toBe('body of A');
+    const snapshotsOfB = await listSnapshots(second, 'note-1');
+    expect(snapshotsOfB.some((snapshot) => snapshot.body.includes('body of A'))).toBe(false);
+  });
+
+  it('gives the history away when the storage is full and keeps the note', async () => {
+    const big = 'x'.repeat(3_000_000);
+    const created = createNote(createEmptyVault(), 'Roadmap', 'the first body');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+    // Two kept bodies of three megabytes: together more than the half the
+    // history may keep, so the reclaim has bytes it must give away.
+    await writeSnapshot('current', created.note.id, big);
+    await writeSnapshot('current', created.note.id, `${big}y`);
+    await renderLegacyApp();
+
+    // The save is refused once for space, then the history makes room.
+    storage.quotaFailures.set('current', 1);
+    await fill(editorTextarea(), 'the latest body');
+
+    await waitFor(async () => (await loadVault())?.notes[0]?.body === 'the latest body');
+    // The retry happened (a second write), and it carried the note.
+    const writes = storage.writes.filter((write) => write.key === 'current');
+    expect(writes.length).toBeGreaterThanOrEqual(2);
+    expect(writes.at(-1)?.done).toBe(true);
+    // The oldest body was the one given away; the newer one stays.
+    const kept = await listSnapshots('current', created.note.id);
+    expect(kept.some((snapshot) => snapshot.body === big)).toBe(false);
+    expect(kept.some((snapshot) => snapshot.body === `${big}y`)).toBe(true);
+  });
+
+  it('keeps the notes when the settings cannot be written', async () => {
+    await renderLegacyApp();
+    storage.settingsFailures.set('settings', 1);
+
+    await click(buttonByName('Settings'));
+    await waitFor(() => container.querySelector('dialog.settings[open]') !== null);
+    await click(dialogButton('settings', 'Save settings'));
+    await waitFor(() => statusText().includes('settings'));
+
+    await fill(editorTextarea(), 'a body that is stored');
+
+    await waitFor(async () => (await loadVault())?.notes[0]?.body === 'a body that is stored');
+  });
+
+  it('removes a note for good only after its name was written', async () => {
+    const created = createNote(createEmptyVault(), 'Roadmap', 'a body');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+    await renderLegacyApp();
+
+    await runCommand('Delete note permanently');
+    await waitFor(() => container.querySelector('dialog.confirm--danger[open]') !== null);
+    expect(dialogButton('confirm--danger', 'Delete permanently').disabled).toBe(true);
+
+    await fill(
+      container.querySelector<HTMLInputElement>('dialog.confirm--danger input') as HTMLInputElement,
+      'Roadmap',
+    );
+    await click(dialogButton('confirm--danger', 'Delete permanently'));
+
+    await waitFor(async () => (await loadVault())?.notes.length === 0);
+    expect(noteNames()).not.toContain('Roadmap');
+  });
+
+  it('keeps the flushed draft when a delete is confirmed during a save stall', async () => {
+    // The refused delete/stalled flush path: an identity re-check after the
+    // flush sits in handleDeletePermanent as defense in depth. The
+    // interception through the UI cannot get a switch ahead of the delete's
+    // resumption (both dialogs are modal and both flushes await the same
+    // pending write), so this test pins the reachable invariant instead.
+    await renderLegacyApp();
+    await storeSecondVault();
+    // The write of a pending edit waits, so the deletion flush stalls too.
+    storage.delays.set('current', [300]);
+    await fill(editorTextarea(), 'pending body of A');
+
+    await runCommand('Delete note permanently');
+    await waitFor(() => container.querySelector('dialog.confirm--danger[open]') !== null);
+    await fill(
+      container.querySelector<HTMLInputElement>('dialog.confirm--danger input') as HTMLInputElement,
+      'Getting started',
+    );
+    await click(dialogButton('confirm--danger', 'Delete permanently'));
+
+    // The reader switches while the deletion waits for the flush.
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+
+    await waitFor(() => noteTitle() === 'Only in B');
+
+    await waitFor(async () => {
+      const stored = await loadVault('current');
+      return stored?.notes.some((note) => note.body.includes('pending body of A')) ?? false;
+    });
+    // The flushed edit belongs to 'current', and vault B never overwrote it.
+    const storedA = await loadVault('current');
+    expect(storedA?.notes.some((note) => note.name === 'Only in B')).toBe(false);
+    expect(storedA?.notes.some((note) => note.name === 'Getting started')).toBe(true);
+  });
+
+  it('names the note the history belongs to after the reader moves', async () => {
+    const created = createNote(createEmptyVault(), 'Roadmap', 'first body');
+    const again = createNote(
+      { ...created.vault, activeNoteId: created.note.id },
+      'Segunda',
+      'second body',
+    );
+    await saveVault(again.vault);
+    await renderLegacyApp();
+
+    await click(buttonByName('Recover note'));
+    await waitFor(() => container.querySelector('dialog.recovery[open]') !== null);
+    expect(container.querySelector('.recovery__note')?.textContent).toContain('Roadmap');
+
+    // jsdom keeps the document live under the modal dialog, so the row is
+    // clickable the way a pointer would press it through other layers.
+    const rows = queryAll('.explorer__note');
+    const row = rows.find((element) => (element.textContent ?? '').includes('Segunda'));
+    if (!row) throw new Error('no explorer row for Segunda');
+    await click(row.closest('button') ?? row);
+
+    // The history still belongs to the note it was opened for.
+    await waitFor(() =>
+      (container.querySelector('.recovery__note')?.textContent ?? '').includes('Roadmap'),
+    );
+    expect(container.querySelector('.recovery__note')?.textContent).not.toContain('Segunda');
+  });
+
+  it('says when the history cannot be read', async () => {
+    const created = createNote(createEmptyVault(), 'Roadmap', 'a body');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+    storage.listFailures.set(created.note.id, 1);
+    await renderLegacyApp();
+
+    await click(buttonByName('Recover note'));
+    await waitFor(() => container.querySelector('dialog.recovery[open]') !== null);
+    await waitFor(() =>
+      (container.querySelector('.recovery__empty')?.textContent ?? '').includes(
+        'The recovery history of this note could not be read.',
+      ),
+    );
+    const emptyText = container.querySelector('.recovery__empty')?.textContent ?? '';
+    expect(emptyText).toContain('The recovery history of this note could not be read.');
+    expect(emptyText).not.toContain('No snapshot');
+  });
+
+  it('keeps the note when the name that was written is not its name', async () => {
+    const created = createNote(createEmptyVault(), 'Roadmap', 'a body');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+    await renderLegacyApp();
+
+    await runCommand('Delete note permanently');
+    await waitFor(() => container.querySelector('dialog.confirm--danger[open]') !== null);
+    await fill(
+      container.querySelector<HTMLInputElement>('dialog.confirm--danger input') as HTMLInputElement,
+      'Backlog',
+    );
+
+    expect(dialogButton('confirm--danger', 'Delete permanently').disabled).toBe(true);
+    expect(noteNames()).toContain('Roadmap');
+  });
+});
+
+describe('the navigation history', () => {
+  it('goes back to the note the reader came from', async () => {
+    await renderLegacyApp();
+    expect(noteTitle()).toBe('Welcome to Lattice Notes');
+
+    await click(buttonByName('Getting started'));
+    expect(noteTitle()).toBe('Getting started');
+
+    await runCommand('Go back');
+
+    expect(noteTitle()).toBe('Welcome to Lattice Notes');
+    expect(statusText()).toContain('Back to');
+  });
+
+  it('goes forward to the note the reader left', async () => {
+    await renderLegacyApp();
+    await click(buttonByName('Getting started'));
+
+    await runCommand('Go back');
+    expect(noteTitle()).toBe('Welcome to Lattice Notes');
+
+    await runCommand('Go forward');
+
+    expect(noteTitle()).toBe('Getting started');
+  });
+
+  it('the history is gone after a reload', async () => {
+    await renderLegacyApp();
+    await click(buttonByName('Getting started'));
+    // The trail works in this tab.
+    await runCommand('Go back');
+    expect(noteTitle()).toBe('Welcome to Lattice Notes');
+    await runCommand('Go forward');
+    expect(noteTitle()).toBe('Getting started');
+    await waitFor(async () => {
+      const stored = await loadVault();
+      const active = stored?.notes.find((note) => note.id === stored.activeNoteId);
+      return active?.name === 'Getting started';
+    });
+
+    await remountApp();
+    await runCommand('Go back');
+
+    // The trail lives in this tab only, so a reload starts without one.
+    expect(noteTitle()).toBe('Getting started');
+    expect(statusText()).toContain('nothing to go back to');
+  });
+
+  it('opens the note of the history with the shortcut', async () => {
+    await renderLegacyApp();
+    await click(buttonByName('Getting started'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: '[',
+          code: 'BracketLeft',
+          altKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    expect(noteTitle()).toBe('Welcome to Lattice Notes');
+  });
+
+  it('does not open a note that is in the trash', async () => {
+    await renderLegacyApp();
+    await click(buttonByName('Getting started'));
+    await runCommand('Move note to trash');
+
+    await runCommand('Go back');
+
+    // A note in the trash is not a note on the screen.
+    expect(statusText()).toContain('trash');
+    expect(noteTitle()).not.toBe('Getting started');
+  });
+
+  it('does not take a bracket that the keyboard turned into a character', async () => {
+    await renderLegacyApp();
+    await click(buttonByName('Getting started'));
+    await runCommand('Go back');
+
+    const editor = editorTextarea();
+    editor.focus();
+    await fill(editor, 'the text before');
+    await act(async () => {
+      editor.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'ü',
+          code: 'BracketRight',
+          altKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    expect(noteTitle()).toBe('Welcome to Lattice Notes');
+    expect(editor.value).toBe('the text before');
+  });
+});
+
+describe('the bookmarks of a vault', () => {
+  it('keeps unread bookmarks until a retry succeeds', async () => {
+    await renderLegacyApp();
+    await runCommand('Bookmark note');
+    await waitFor(async () => (await loadBookmarks('current')).bookmarks.length === 1);
+    const before = (await loadBookmarks('current')).bookmarks;
+
+    await click(buttonByName('Getting started'));
+    await waitFor(async () => {
+      const stored = await loadVault();
+      return stored?.notes.find((note) => note.id === stored.activeNoteId)?.name === 'Getting started';
+    });
+
+    storage.bookmarkReadFailures.set('current', 1);
+    await remountApp();
+    await runCommand('Bookmarks');
+    await waitFor(() => container.querySelector('.bookmarks__empty')?.textContent?.includes('could not be read') ?? false);
+    await click(container.querySelector('.bookmarks__add') as Element);
+    await sleep(50);
+    expect((await loadBookmarks('current')).bookmarks).toEqual(before);
+    const retry = Array.from(container.querySelectorAll('.bookmarks button')).find(
+      (button) => button.textContent === 'Retry bookmarks',
+    );
+    expect(retry).toBeDefined();
+    await click(retry as Element);
+    await waitFor(() => container.querySelectorAll('.bookmarks__item').length === 1);
+    expect((await loadBookmarks('current')).bookmarks).toEqual(before);
+  });
+  it('bookmarks the note on the screen and keeps it in the storage', async () => {
+    await renderLegacyApp();
+
+    await runCommand('Bookmark note');
+
+    expect(statusText()).toContain('Bookmarked');
+    await waitFor(async () => {
+      const read = await loadBookmarks('current');
+      return read.bookmarks.length === 1;
+    });
+    const read = await loadBookmarks('current');
+    expect(read.bookmarks[0]?.title).toBe('Welcome to Lattice Notes');
+  });
+
+  it('shows the bookmarks in the panel and takes them off again', async () => {
+    await renderLegacyApp();
+    await runCommand('Bookmark note');
+    await runCommand('Bookmarks');
+
+    expect(container.querySelectorAll('.bookmarks__item')).toHaveLength(1);
+
+    await click(container.querySelector('.bookmarks__remove') as Element);
+
+    expect(container.querySelectorAll('.bookmarks__item')).toHaveLength(0);
+    await waitFor(async () => {
+      const read = await loadBookmarks('current');
+      return read.bookmarks.length === 0;
+    });
+  });
+
+  it('the bookmark of a note is there after a reload', async () => {
+    await renderLegacyApp();
+    await runCommand('Bookmark note');
+    await waitFor(async () => {
+      const read = await loadBookmarks('current');
+      return read.bookmarks.length === 1;
+    });
+
+    await remountApp();
+    await runCommand('Bookmarks');
+
+    expect(container.querySelectorAll('.bookmarks__item')).toHaveLength(1);
+  });
+
+  it('a broken bookmark record does not stop the notes from loading', async () => {
+    await saveVault(createSeedVault());
+    await writeRawBookmark('broken', { id: 'broken' });
+
+    await renderLegacyApp();
+
+    expect(noteNames().length).toBeGreaterThan(1);
+    await waitFor(() => statusText().includes('bookmark'));
+    expect(statusText()).toContain('could not be read');
+  });
+
+  it('waits for the stored bookmarks before accepting changes', async () => {
+    storage.bookmarkDelays.set('current', 300);
+    await renderLegacyApp();
+
+    await runCommand('Bookmark note');
+
+    expect(statusText()).toContain('have not been read');
+    await runCommand('Bookmarks');
+    await waitFor(() => !(container.querySelector('.bookmarks__add') as HTMLButtonElement).disabled);
+    await click(container.querySelector('.bookmarks__add') as Element);
+    expect(container.querySelectorAll('.bookmarks__item')).toHaveLength(1);
+  });
+
+  it('does not write the bookmarks of a vault over the vault that took the screen', async () => {
+    await renderLegacyApp();
+    const second = await storeSecondVault();
+    await runCommand('Bookmark note');
+    await waitFor(async () => (await loadBookmarks('current')).bookmarks.length === 1);
+
+    await runCommand('Bookmarks');
+    const addButton = () =>
+      container.querySelector<HTMLButtonElement>('.bookmarks__add') as HTMLButtonElement;
+
+    // The read of the next vault is still running while the reader works.
+    storage.bookmarkDelays.set(second, 400);
+    await openVaultManager();
+    await clickManagerButton('Open Second vault');
+    await waitFor(() => noteTitle() === 'Only in B');
+
+    await click(addButton());
+    await sleep(600);
+
+    // A toggle during the read is either refused, or written to the vault it
+    // belongs to. It is never written with the list of the vault that left.
+    const after = (await loadBookmarks(second)).bookmarks;
+    if (after.length === 0) await click(addButton());
+
+    await waitFor(async () => (await loadBookmarks(second)).bookmarks.length === 1);
+    expect((await loadBookmarks(second)).bookmarks.map((vote) => vote.title)).toEqual(['Only in B']);
+
+    // The vault that took the screen in the meantime is untouched.
+    expect((await loadBookmarks('current')).bookmarks).toHaveLength(1);
   });
 });

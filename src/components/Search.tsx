@@ -2,6 +2,7 @@ import { useId, useMemo, useRef, useState } from 'react';
 
 import { searchNotes } from '../domain/vault';
 import type { Vault } from '../domain/types';
+import Icon from './Icon';
 
 export interface SearchProps {
   vault: Vault;
@@ -54,6 +55,7 @@ export default function Search({ vault, onSelect, onAnnounce, inputRef }: Search
         Search notes
       </label>
       <div className="search__row">
+        <Icon name="search" size={14} className="search__icon" />
         <input
           id={fieldId}
           ref={input}

@@ -101,10 +101,12 @@ function note(name: string): Note {
 
 interface HarnessProps {
   notes?: Note[];
+  /** True when the screen of the reader is narrow. */
+  compact?: boolean;
 }
 
 /** The calendar with the button that opens it, as the app shows it. */
-function Harness({ notes = [] }: HarnessProps) {
+function Harness({ notes = [], compact = false }: HarnessProps) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -114,6 +116,7 @@ function Harness({ notes = [] }: HarnessProps) {
       <Calendar
         open={open}
         notes={notes}
+        compact={compact}
         onClose={() => setOpen(false)}
         onOpenDate={(key) => OPENED.push(key)}
       />
@@ -121,9 +124,9 @@ function Harness({ notes = [] }: HarnessProps) {
   );
 }
 
-async function renderCalendar(notes: Note[] = []): Promise<void> {
+async function renderCalendar(notes: Note[] = [], compact = false): Promise<void> {
   await act(async () => {
-    root.render(<Harness notes={notes} />);
+    root.render(<Harness notes={notes} compact={compact} />);
   });
   // The trigger has the keyboard before the calendar opens, so the calendar
   // knows where the keyboard has to go back to.
@@ -338,8 +341,7 @@ describe('the calendar', () => {
     expect(document.activeElement).toBe(trigger());
   });
 
-  it('keeps the page free of a horizontal overflow', async () => {
-    await renderCalendar();
+  it('keeps the page free of a horizontal overflow', async () => {    await renderCalendar();
 
     // The calendar is a dialog, so it lives in the top layer of the page and
     // can never make the page wider than the screen.
@@ -356,6 +358,24 @@ describe('the calendar', () => {
 
     const dialogRule = css.slice(css.indexOf('.calendar {'));
     expect(dialogRule.slice(0, 300)).toContain('calc(100vw -');
+  });
+
+  it('fits the whole week on a narrow screen', async () => {
+    await renderCalendar([], true);
+
+    // The panel knows that the screen is narrow, so it takes the whole width
+    // of the screen and the week fits in it.
+    expect(dialog().className).toContain('calendar--compact');
+    expect(container.querySelectorAll('.calendar__weekday')).toHaveLength(7);
+
+    const css = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf8');
+    const compact = css.slice(css.indexOf('.calendar--compact'));
+    expect(compact.slice(0, 400)).toContain('100vw');
+
+    // The days keep their 44 pixel targets, so the week is never shrunk
+    // under a finger.
+    const day = css.slice(css.indexOf('.calendar__day {'));
+    expect(day.slice(0, 300)).toContain('min-width: var(--touch-target)');
   });
 });
 

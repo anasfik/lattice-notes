@@ -1,0 +1,25 @@
+name: Bug report
+description: Report a reproducible problem using synthetic notes.
+body:
+  - type: markdown
+    attributes:
+      value: Do not include real notes, vault exports or credentials. Report security issues through SECURITY.md.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include expected and actual behavior.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Browser, OS and revision
+      placeholder: Chromium version, OS, commit or branch
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or console errors
+      description: Remove all personal data first. Say whether the problem affects saving or recovery.
