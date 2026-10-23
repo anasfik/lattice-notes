@@ -18,6 +18,7 @@ Target: [anasfik/lattice-notes](https://github.com/anasfik/lattice-notes), creat
 - Layout browser regression: **70 assertions passed**, zero console/page errors; desktop 1440×900 and mobile 390×844 screenshots inspected. Chromium only.
 - `npm audit` and `npm audit --omit=dev`: zero reported vulnerabilities.
 - `git diff --check`, local links in README/contribution/security docs, and five YAML parses passed.
+- `actionlint` 1.7.12 passed for `.github/workflows/ci.yml`.
 - Bounded common-credential pattern scan: 114 working files and 183 reachable history blobs, no matches. This is not an exhaustive secret audit.
 
 Local execution logs and synthetic browser evidence remain in ignored `.superpowers/sdd/2026-10-23-github/` and `.superpowers/sdd/2026-10-22-layout-repair/`; browser-profile data and personal notes are not included.
@@ -27,3 +28,10 @@ Local execution logs and synthetic browser evidence remain in ignored `.superpow
 Independent final code review was requested but remains unverified while the free-model provider is unavailable. Earlier review gaps are documented in the design/layout verification reports. Local green gates do not imply independent review approval or a successful GitHub Actions run. Remote commit and CI results are verified separately after push.
 
 No deployment, release, public-visibility change, branch protection, or account/billing change is part of this preparation.
+
+## Remote verification
+
+- Workspace commit `cad557631ab6f705e3ba6a075c5726ebb32ed09c` pushed to `main`; remote branch SHA matches. Local feature branch and worktree retained, with `origin/main` upstream.
+- README is readable through the GitHub API. Repository is private, issues enabled, wiki/projects disabled, merged-branch cleanup enabled, and Markdown/local-first/offline-first/React/TypeScript topics configured.
+- **GitHub CI blocked:** the [push run](https://github.com/anasfik/lattice-notes/actions/runs/39878234851) and a separate [manual diagnostic run](https://github.com/anasfik/lattice-notes/actions/runs/39878434787) both returned `startup_failure`, with zero jobs/check runs and no downloadable logs. Dependabot-generated runs also failed at startup. Actions is enabled and local `actionlint` passes; the API evidence does not establish the underlying cause. No speculative workflow changes, billing changes or repeated reruns were made.
+- Follow-up: inspect the run's GitHub UI for any account/repository restriction, resolve it, then run **CI → Run workflow**. A successful hosted test/build is still required; local checks are not a substitute.
