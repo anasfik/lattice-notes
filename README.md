@@ -1,6 +1,5 @@
 # Lattice Notes
 
-[![CI](https://github.com/anasfik/lattice-notes/actions/workflows/ci.yml/badge.svg)](https://github.com/anasfik/lattice-notes/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-99512e.svg)](LICENSE)
 
 **Your thoughts. In good company.**
@@ -178,7 +177,7 @@ The development server never registers the service worker, so the offline shell
 only exists in a production build. Use `npm run preview` to try the offline
 behaviour.
 
-CI runs `npm ci`, `npm test` and `npm run build` on pushes and pull requests.
+Local verification is `npm ci`, `npm test` and `npm run build`.
 To host it yourself, serve `dist/` from an HTTPS static host (localhost also
 supports the service worker). No hosting or public demo is configured here.
 Keep the same origin to retain browser-local notes; export before moving hosts.
