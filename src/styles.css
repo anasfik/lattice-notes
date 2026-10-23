@@ -321,14 +321,23 @@ a {
 .workspace {
   display: grid;
   grid-template-columns: var(--explorer-width) minmax(0, 1fr) var(--context-rail-width);
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   grid-template-areas:
     'toolbar toolbar toolbar'
+    'feed feed feed'
     'explorer main context';
   height: 100vh;
   height: 100dvh;
   background: var(--color-bg);
   color: var(--color-ink);
+}
+
+/* The status line and the recovery warnings live outside the asides and the
+   document panel, so a compact-panel switch can never hide a live region or
+   a Retry control from the reader or from assistive technology. */
+.workspace__feed {
+  grid-area: feed;
+  min-width: 0;
 }
 
 /* Toolbar ----------------------------------------------------------------- */
@@ -915,6 +924,8 @@ a {
 .workspace__warning-text {
   color: var(--color-danger);
   font-size: var(--text-sm);
+  /* A long message must not widen the strip. */
+  overflow-wrap: anywhere;
 }
 
 .workspace__warning-action {
@@ -3397,9 +3408,10 @@ a {
 @media (max-width: 48rem) {
   .workspace {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
     grid-template-areas:
       'toolbar'
+      'feed'
       'content';
   }
 

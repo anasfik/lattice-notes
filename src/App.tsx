@@ -59,6 +59,7 @@ import {
   loadVault,
   loadVaultSession,
   openStoredVault,
+  pruneSnapshots,
   purgeStoredNote,
   reclaimSnapshotSpace,
   renameStoredVault,
@@ -205,6 +206,9 @@ export default function App() {
 
   const vaultRef = useRef(vault);
   const baseRef = useRef(vault);
+  /** The latest settings, so callbacks that never rerun read the retention. */
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   /** The open notes that are stored, so a save knows what changed. */
   const baseSessionRef = useRef<string[]>([]);
   /**
@@ -1123,7 +1127,19 @@ export default function App() {
     setRecoveryOpen(true);
     void (async () => {
       try {
-        setSnapshots(await listSnapshots(target, id));
+        // The retention window applies even when capturing is off: a body
+        // past it is neither listed here nor left in the storage.
+        const cutoff = retentionCutoff(Date.now(), settingsRef.current.snapshotRetentionDays);
+        const stored = await listSnapshots(target, id);
+        const kept = stored.filter((snapshot) => snapshot.at >= cutoff);
+        if (kept.length !== stored.length) {
+          try {
+            await pruneSnapshots(target, cutoff);
+          } catch {
+            // A history that cannot be swept is still hidden on the screen.
+          }
+        }
+        setSnapshots(kept);
       } catch {
         // A history that cannot be read is an error, not an empty history.
         setRecoveryError('The recovery history of this note could not be read.');

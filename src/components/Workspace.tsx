@@ -608,6 +608,41 @@ export default function Workspace(props: WorkspaceProps) {
           onChange={props.onImportFiles}
         />
       </header>
+      <div className="workspace__feed">
+        <div className="workspace__statusbar">
+          <p className="workspace__status" role="status">
+            {props.status}
+          </p>
+        </div>
+
+        {props.importError ? (
+          <div className="workspace__warning" role="alert">
+            <p className="workspace__warning-text">{props.importError}</p>
+            <button
+              type="button"
+              className="workspace__warning-action"
+              onClick={() => {
+                props.onDismissImport();
+                // The alert takes the focused button with it, so the keyboard
+                // goes to the import control. Its menu opens first, or the
+                // button would not be on the screen.
+                if (menuRef.current) menuRef.current.open = true;
+                importButtonRef.current?.focus();
+              }}
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : props.error ? (
+          <div className="workspace__warning" role="alert">
+            <p className="workspace__warning-text">{props.error}</p>
+            <button type="button" className="workspace__warning-action" onClick={props.onRetry}>
+              Retry
+            </button>
+          </div>
+        ) : null}
+      </div>
+
 
       <aside
         className="workspace__explorer"
@@ -815,39 +850,6 @@ export default function Workspace(props: WorkspaceProps) {
           onClose={props.onCloseTab}
           focusRequest={props.tabFocus}
         />
-
-        <div className="workspace__statusbar">
-          <p className="workspace__status" role="status">
-            {props.status}
-          </p>
-        </div>
-
-        {props.importError ? (
-          <div className="workspace__warning" role="alert">
-            <p className="workspace__warning-text">{props.importError}</p>
-            <button
-              type="button"
-              className="workspace__warning-action"
-              onClick={() => {
-                props.onDismissImport();
-                // The alert takes the focused button with it, so the keyboard
-                // goes to the import control. Its menu opens first, or the
-                // button would not be on the screen.
-                if (menuRef.current) menuRef.current.open = true;
-                importButtonRef.current?.focus();
-              }}
-            >
-              Dismiss
-            </button>
-          </div>
-        ) : props.error ? (
-          <div className="workspace__warning" role="alert">
-            <p className="workspace__warning-text">{props.error}</p>
-            <button type="button" className="workspace__warning-action" onClick={props.onRetry}>
-              Retry
-            </button>
-          </div>
-        ) : null}
 
         {active ? null : (
           <div className="workspace__empty-note">

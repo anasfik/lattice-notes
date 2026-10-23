@@ -879,6 +879,7 @@ describe('workspace shell', () => {
 
     expect(order).toEqual([
       'workspace__toolbar',
+      'workspace__feed',
       'workspace__explorer',
       'workspace__main',
       'workspace__context',
@@ -1206,6 +1207,33 @@ describe('import and export', () => {
 });
 
 describe('compact panels', () => {
+  it('keeps announcements visible while the index is open', async () => {
+    window.innerWidth = 390;
+    await renderLegacyApp();
+    await click(queryAll<HTMLButtonElement>('.workspace__panel-toggle')[0] as Element);
+    await click(buttonByName('Delete Welcome to Lattice Notes'));
+    expect(statusText()).toContain('Deleted Welcome to Lattice Notes');
+    const status = container.querySelector('[role="status"]');
+    expect(status).not.toBeNull();
+    expect(status?.closest('[hidden]')).toBeNull();
+    expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('keeps save errors and retry reachable while the index is open', async () => {
+    window.innerWidth = 390;
+    await renderLegacyApp();
+    storage.failures.set('current', 1);
+    await fill(editorTextarea(), 'draft that must still be saved');
+    await click(queryAll<HTMLButtonElement>('.workspace__panel-toggle')[0] as Element);
+    await waitFor(() => container.querySelector('[role="alert"]') !== null);
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert?.closest('[hidden]')).toBeNull();
+    await click(buttonByName('Retry'));
+    await waitFor(async () => (await loadVault())?.notes.some((note) => note.body === 'draft that must still be saved') ?? false);
+    await waitFor(() => container.querySelector('[role="alert"]') === null);
+    expect(container.querySelector('.workspace__explorer')?.hasAttribute('hidden')).toBe(false);
+  });
+
   it('reveals and focuses a first note created from the document empty state', async () => {
     await saveVault(createEmptyVault());
     window.innerWidth = 390;
@@ -3679,6 +3707,31 @@ describe('the settings, the recovery and the permanent delete', () => {
     if (!found) throw new Error(`no button named "${label}" in the ${dialog} dialog`);
     return found;
   }
+
+  it('expires old recovery bodies after retention is lowered even with capture disabled', async () => {
+    const created = createNote(createEmptyVault(), 'Roadmap', 'current body');
+    await saveVault({ ...created.vault, activeNoteId: created.note.id });
+    await saveSettings({ ...DEFAULT_SETTINGS, snapshotIntervalMinutes: 0, snapshotRetentionDays: 90 });
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() - 10 * 86_400_000);
+    try {
+      await writeSnapshot('current', created.note.id, 'expired body');
+      await writeSnapshot('another-vault', created.note.id, 'other vault body');
+    } finally {
+      clock.mockRestore();
+    }
+    await renderLegacyApp();
+    await click(buttonByName('Settings'));
+    const retention = container.querySelectorAll<HTMLInputElement>('dialog.settings input[type="number"]')[1];
+    await fill(retention as HTMLInputElement, '1');
+    await click(dialogButton('settings', 'Save settings'));
+    await waitFor(async () => (await loadSettings())?.snapshotRetentionDays === 1);
+
+    await click(buttonByName('Recover note'));
+    await waitFor(() => container.querySelector('.recovery__empty')?.textContent?.includes('No snapshot') ?? false);
+    expect(await listSnapshots('current', created.note.id)).toEqual([]);
+    expect((await listSnapshots('another-vault', created.note.id)).map((snapshot) => snapshot.body)).toEqual(['other vault body']);
+    expect(editorTextarea().value).toBe('current body');
+  });
 
   it('restores an earlier body of a note from its history', async () => {
     const created = createNote(createEmptyVault(), 'Roadmap', 'the first body');
